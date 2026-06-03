@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# Node
+node_modules/
+.next/
+out/
+
+# Data
+data/*.db
+data/*.jsonl
+*.db-journal
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Env
+.env
+.env.local
+.env.production
+backend/.env
+
+# Config (keep example, ignore real config with secrets)
+backend/config.yaml
+!backend/config.yaml.example
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Test
+.pytest_cache/
+.coverage
+htmlcov/
+
+# MyPy
+.mypy_cache/

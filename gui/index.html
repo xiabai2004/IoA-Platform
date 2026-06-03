@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IoA 分布式网络运维协同平台 — 演示版</title>
+<script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0b1120;--panel:#111827;--border:#1e3a5f;--accent:#38bdf8;
+  --green:#22c55e;--yellow:#f59e0b;--red:#ef4444;--purple:#a855f7;
+  --text:#e2e8f0;--muted:#64748b;
+}
+body{font-family:'Segoe UI','PingFang SC',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+
+/* ── Header ── */
+.header{background:linear-gradient(90deg,#0f172a 0%,#1e3a5f 100%);padding:12px 24px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
+.header-left{display:flex;align-items:center;gap:12px}
+.header h1{font-size:1.05em;font-weight:700;background:linear-gradient(90deg,var(--accent),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.header-right{display:flex;align-items:center;gap:14px}
+#wsDot{width:8px;height:8px;border-radius:50%;display:inline-block}
+#wsDot.ok{background:var(--green);box-shadow:0 0 6px var(--green)}
+#wsDot.off{background:var(--red);box-shadow:0 0 6px var(--red)}
+#clock{font-size:0.78em;color:var(--muted);font-variant-numeric:tabular-nums}
+
+/* ── Grid ── */
+.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;padding:14px 16px;max-width:1920px;margin:0 auto}
+.panel{background:var(--panel);border-radius:10px;padding:14px 16px;border:1px solid var(--border);position:relative;overflow:hidden}
+.panel::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--accent),var(--purple),transparent)}
+.panel h2{font-size:0.78em;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;font-weight:600}
+.full{grid-column:1/-1}.col2{grid-column:span 2}
+
+/* ── Input row ── */
+.input-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.input-row input{flex:1;min-width:200px;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:#0f172a;color:var(--text);font-size:0.85em;outline:none;transition:border 0.2s}
+.input-row input:focus{border-color:var(--accent)}
+.btn{padding:7px 16px;border-radius:8px;border:1px solid transparent;font-size:0.82em;font-weight:600;cursor:pointer;transition:all 0.15s;white-space:nowrap}
+.btn-primary{background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-color:#1d4ed8}
+.btn-primary:hover{background:linear-gradient(135deg,#1e40af,#1d4ed8);box-shadow:0 0 12px #1d4ed844}
+.btn-danger{background:linear-gradient(135deg,#991b1b,#dc2626);color:#fca5a5;border-color:#991b1b}
+.btn-danger:hover{box-shadow:0 0 12px #dc262644}
+.btn-ghost{background:transparent;color:var(--text);border-color:var(--border)}
+.btn-ghost:hover{background:#1e293b}
+.btn-sm{padding:4px 10px;font-size:0.72em}
+
+/* ── Status badges ── */
+.badge{display:inline-block;padding:2px 10px;border-radius:10px;font-size:0.7em;font-weight:600;letter-spacing:0.02em}
+.badge.pending{background:#1e293b;color:#94a3b8}.badge.assigned{background:#1e3a5f;color:#7dd3fc}
+.badge.running{background:#1d4ed8;color:#93c5fd;animation:pluse 1.2s ease-in-out infinite}
+.badge.completed{background:#14532d;color:#86efac}.badge.failed{background:#7f1d1d;color:#fca5a5}
+.badge.retrying{background:#78350f;color:#fbbf24;animation:pluse 0.7s ease-in-out infinite}
+@keyframes pluse{0%,100%{opacity:1}50%{opacity:0.4}}
+
+/* ── Metric gauges ── */
+.gauge-row{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.gauge{background:#0f172a;border-radius:8px;padding:10px 12px;min-width:100px;text-align:center;border:1px solid #1e293b;transition:border-color 0.3s}
+.gauge.warn{border-color:var(--yellow)}.gauge.critical{border-color:var(--red)}
+.gauge-val{font-size:1.4em;font-weight:800;font-variant-numeric:tabular-nums}
+.gauge-val.ok{color:var(--green)}.gauge-val.warn{color:var(--yellow)}.gauge-val.crit{color:var(--red)}
+.gauge-lbl{font-size:0.62em;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-top:2px}
+.gauge-domain{font-size:0.68em;color:var(--accent);font-weight:600;margin-bottom:2px}
+
+/* ── Topology ── */
+#topo{height:300px;border-radius:8px;background:#0a0f1e;border:1px solid var(--border);overflow:hidden}
+#topo canvas{filter:brightness(1.1)}
+
+/* ── Agent table ── */
+.agent-table{width:100%;border-collapse:collapse;font-size:0.78em}
+.agent-table th{color:var(--muted);font-weight:500;text-align:left;padding:5px 8px;border-bottom:1px solid var(--border)}
+.agent-table td{padding:5px 8px;border-bottom:1px solid #111827}
+.agent-dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px}
+.agent-dot.up{background:var(--green);box-shadow:0 0 4px var(--green)}.agent-dot.down{background:var(--red)}
+
+/* ── DAG chain ── */
+.dag-row{cursor:pointer;transition:background 0.15s}.dag-row:hover{background:#1e293b44}
+.dag-row td{padding:6px 8px;font-size:0.82em;border-bottom:1px solid #111827}
+.node-chain{display:flex;align-items:center;flex-wrap:wrap;gap:0;padding:10px 4px}
+.node-block{background:#111827;border-radius:8px;padding:7px 14px;min-width:90px;border:2px solid #1e3a5f;text-align:center;transition:all 0.4s}
+.node-block.running{border-color:var(--accent);box-shadow:0 0 14px #38bdf844}
+.node-block.completed{border-color:var(--green);box-shadow:0 0 8px #22c55e33}
+.node-block.failed{border-color:var(--red)}.node-block.retrying{border-color:var(--yellow);animation:pluse 0.7s ease-in-out infinite}
+.node-title{font-size:0.72em;font-weight:700;color:var(--accent)}
+.node-agent{font-size:0.6em;color:var(--muted);margin-top:1px}
+.node-dur{font-size:0.58em;color:var(--muted);margin-top:2px}
+.arrow{color:#334155;font-size:1em;margin:0 2px}
+
+/* ── Verdict ── */
+.verdict{display:inline-block;padding:5px 14px;border-radius:8px;font-size:0.82em;font-weight:600;margin:6px 0}
+.verdict.pass{background:#14532d;color:#86efac}.verdict.retry{background:#78350f;color:#fbbf24}
+.verdict.fail{background:#7f1d1d;color:#fca5a5}
+
+/* ── Narrative ── */
+.narrative{background:#0f172a;border-radius:8px;padding:12px 16px;margin-top:8px;border-left:3px solid var(--accent);font-size:0.8em;line-height:1.6;color:#cbd5e1}
+
+/* ── Message flow ── */
+.msg-flow{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto;padding-right:4px}
+.msg-item{display:flex;align-items:center;gap:6px;font-size:0.7em;padding:4px 8px;border-radius:6px;background:#0f172a;border:1px solid #1e293b}
+.msg-from{color:var(--accent);font-weight:600;min-width:80px}.msg-to{color:var(--purple);font-weight:600;min-width:80px}
+.msg-type{color:var(--muted);min-width:60px}.msg-time{color:#334155;font-size:0.9em;margin-left:auto}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}
+
+/* ── Toast ── */
+#toast{position:fixed;top:60px;right:20px;z-index:999;display:flex;flex-direction:column;gap:6px}
+.toast-item{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 16px;font-size:0.8em;animation:slideIn 0.3s ease;max-width:360px}
+@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* ── Demo banner ── */
+.demo-banner{background:linear-gradient(90deg,#1e3a5f,#0f172a);border:1px solid var(--accent);border-radius:8px;padding:10px 16px;margin-bottom:10px;display:flex;align-items:center;gap:10px;font-size:0.82em}
+.demo-banner .dot{width:10px;height:10px;border-radius:50%;background:var(--green);animation:pluse 1.5s ease-in-out infinite}
+
+/* ── Material Symbols ── */
+.material-symbols-outlined{font-variation-settings:'FILL'0,'wght'400,'GRAD'0,'opsz'20;color:var(--muted);user-select:none}
+.panel h2 .material-symbols-outlined,.header h1 .material-symbols-outlined{color:var(--accent)}
+.btn .material-symbols-outlined{color:inherit}
+
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <h1><span class="material-symbols-outlined" style="font-size:1.2em;vertical-align:middle">public</span> IoA 分布式网络运维协同平台</h1>
+  </div>
+  <div class="header-right">
+    <span id="wsDot" class="off"></span>
+    <span id="wsLabel" style="font-size:0.72em;color:var(--muted)">未连接</span>
+    <span id="clock"></span>
+  </div>
+</div>
+
+<div class="grid">
+  <!-- NL Input -->
+  <div class="panel full">
+    <h2><span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle">terminal</span> 运维指令</h2>
+    <div class="input-row" style="margin-bottom:8px">
+      <input id="nlInput" value="华东地区网络延迟异常，请全流程诊断修复" placeholder="输入自然语言运维指令...">
+      <button class="btn btn-primary" onclick="sendNL()"><span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle">play_arrow</span> 执行指令</button>
+      <button class="btn btn-danger" onclick="demoFault()"><span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle">bolt</span> 注入故障</button>
+      <select id="faultType" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:#0f172a;color:var(--text);font-size:0.82em">
+        <option value="link_congestion">链路拥塞</option>
+        <option value="link_outage">链路中断</option>
+        <option value="cpu_overload">CPU过载</option>
+        <option value="ddos">DDoS攻击</option>
+        <option value="misconfig">配置错误</option>
+        <option value="device_failure">设备故障</option>
+      </select>
+      <select id="faultDomain" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:#0f172a;color:var(--text);font-size:0.82em">
+        <option value="east-china">华东</option>
+        <option value="north-china">华北</option>
+        <option value="south-china">华南</option>
+        <option value="west-china">西南</option>
+      </select>
+      <button class="btn btn-ghost" onclick="clearAllFaults()"><span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle">delete_sweep</span> 清除故障</button>
+      <button class="btn btn-ghost" onclick="runDemo()" style="border-color:var(--purple);color:var(--purple)"><span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle">play_circle</span> 一键演示</button>
+    </div>
+    <div id="nlResult" style="font-size:0.78em;color:var(--muted)"></div>
+  </div>
+
+  <!-- Topology -->
+  <div class="panel col2">
+    <h2><span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle">hub</span> 网络拓扑实时状态</h2>
+    <div id="topo"></div>
+  </div>
+
+  <!-- Agents -->
+  <div class="panel">
+    <h2><span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle">precision_manufacturing</span> Agent 集群 <span id="agentCount" style="color:var(--accent)"></span></h2>
+    <div id="agentTable" style="max-height:280px;overflow-y:auto"></div>
+  </div>
+
+  <!-- Metrics -->
+  <div class="panel">
+    <h2><span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle">monitoring</span> 实时指标 <span id="metricsTime" style="font-size:0.8em;color:var(--muted)"></span></h2>
+    <div id="metricsPanel"></div>
+  </div>
+
+  <!-- Chart -->
+  <div class="panel col2">
+    <h2><span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle">show_chart</span> 延迟趋势 <span style="font-size:0.7em;color:var(--muted)">(最近60秒)</span></h2>
+    <div style="height:210px;position:relative"><canvas id="metricsChart"></canvas></div>
+  </div>
+
+  <!-- Message Flow -->
+  <div class="panel">
+    <h2><span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle">swap_horiz</span> IoAP 消息流 <span id="msgCount" style="color:var(--accent)"></span></h2>
+    <div id="msgFlow" class="msg-flow"></div>
+  </div>
+
+  <!-- DAG list -->
+  <div class="panel full">
+    <h2><span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle">account_tree</span> DAG 执行记录 <span id="dagCount" style="color:var(--accent)"></span></h2>
+    <div id="dagBanner"></div>
+    <div id="dagList"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const API='http://127.0.0.1:8000', SIM='http://127.0.0.1:8001';
+const AUTH={'Authorization':'Bearer ioa2026demo'};
+const DOMAINS=['east-china','north-china','south-china','west-china'];
+const DOMAIN_CN={east:'华东',north:'华北',south:'华南',west:'西南'};
+const COLORS={east:'#3b82f6',north:'#22c55e',south:'#f59e0b',west:'#a855f7'};
+
+let expandedDags={}, dagData={}, chart=null, topoNetwork=null;
+let metricsHistory={}; for(const d of DOMAINS) metricsHistory[d]={latency:[],loss:[],bw:[],labels:[]};
+const MAX_H=60;
+let msgBuffer=[];
+
+/* ── Helpers ── */
+function $(id){return document.getElementById(id)}
+function log(msg){$('nlResult').innerHTML=`<span style="color:#475569">[${new Date().toLocaleTimeString()}]</span> ${msg}`;}
+function toast(msg,color='var(--accent)'){
+  const el=document.createElement('div');el.className='toast-item';el.style.borderLeft=`3px solid ${color}`;
+  el.textContent=msg;$('toast').prepend(el);setTimeout(()=>el.remove(),4000);
+}
+async function getJSON(url){
+  const r=await fetch(url,{headers:url.includes('/dag')?AUTH:{}});if(!r.ok)throw Error(r.status);return r.json();
+}
+async function postJSON(url,body){
+  return fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...AUTH},body:JSON.stringify(body)});
+}
+
+/* ── NL / Fault ── */
+async function sendNL(){
+  const txt=$('nlInput').value.trim();if(!txt)return;log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">progress_activity</span> 发送指令: ${txt}`);
+  try{
+    await postJSON(`${API}/messages`,{
+      msg_id:'nl-'+Date.now(),from_agent:'gui',to_agent:'orchestrator-agent',
+      intent:{type:'user',description:txt,priority:'high'},
+      payload:{params:{message:txt}},correlation_id:'gui-'+Date.now(),ts_ms:Date.now()
+    });
+    log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">check_circle</span> 已路由到 orchestrator-agent`);toast('指令已发送','var(--green)');
+  }catch(e){log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">cancel</span> ${e.message}`);toast('发送失败','var(--red)');}
+}
+async function demoFault(){
+  const ft=$('faultType').value, dom=$('faultDomain').value;
+  try{const r=await fetch(`${SIM}/simulator/fault/inject?fault_type=${ft}&target=${dom}`,{method:'POST'});if(!r.ok)throw Error(r.status);const d=await r.json();
+    log(`<span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle">bolt</span> 已注入 ${ft} → ${dom}`);toast(`故障注入: ${ft} @ ${dom}`,'var(--yellow)');
+  }catch(e){log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">cancel</span> ${e.message}`);}
+}
+async function clearAllFaults(){try{await getJSON(`${SIM}/simulator/fault/clear_all`);log('<span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle">delete_sweep</span> 已清除所有故障');toast('故障已清除','var(--green)');}catch(e){}}
+async function runDemo(){
+  toast('一键演示启动: 清除故障→注入→执行→报告','var(--purple)');
+  await clearAllFaults();await new Promise(r=>setTimeout(r,800));
+  $('faultType').value='link_congestion';$('faultDomain').value='east-china';
+  await demoFault();await new Promise(r=>setTimeout(r,1000));
+  $('nlInput').value='华东地区网络延迟异常，请全流程诊断修复';
+  await sendNL();
+}
+
+/* ── Topology ── */
+function initTopo(){
+  const nodes=[],edges=[];
+  nodes.push({id:'Core',label:'Core-Router',shape:'box',size:30,
+    color:{background:'#1e3a5f',border:'#38bdf8'},font:{color:'#e2e8f0',size:13,weight:'bold'}});
+  for(const d of DOMAINS){
+    const eid='Edge-'+d, lbl=DOMAIN_CN[d.slice(0,-6)]+' Edge';
+    nodes.push({id:eid,label:lbl,shape:'box',size:22,
+      color:{background:COLORS[d.slice(0,5)],border:COLORS[d.slice(0,5)]},font:{color:'#e2e8f0',size:11}});
+    edges.push({from:'Core',to:eid,arrows:'to',color:{color:COLORS[d.slice(0,5)],opacity:0.5},width:2.5,
+      arrowStrikethrough:false});
+    for(let i=1;i<=3;i++){
+      const sid='srv-'+d+'-'+i;
+      nodes.push({id:sid,label:'Srv'+i,shape:'dot',size:10,
+        color:{background:COLORS[d.slice(0,5)]+'55',border:COLORS[d.slice(0,5)]},font:{color:'#64748b',size:8}});
+      edges.push({from:eid,to:sid,color:{color:'#1e293b'},width:1,dashes:[4,4]});
+    }
+  }
+  topoNetwork=new vis.Network($('topo'),{nodes:new vis.DataSet(nodes),edges:new vis.DataSet(edges)},{
+    physics:{solver:'barnesHut',gravitationalConstant:-1800,springLength:120,stabilization:{iterations:120}},
+    interaction:{hover:true,zoomView:true,dragView:true},
+    edges:{arrows:{to:{enabled:true,scaleFactor:0.6}},smooth:{type:'curvedCW',roundness:0.2}}
+  });
+}
+function updateTopo(metrics){
+  if(!topoNetwork)return;
+  const up=[],colors={};
+  for(const[domain,m]of Object.entries(metrics||{})){
+    const dk=domain.slice(0,5),eid='Edge-'+domain;
+    let c=COLORS[dk];
+    if(m.latency_ms>200||m.packet_loss>0.05){c='#ef4444';up[eid]='critical';}
+    else if(m.latency_ms>100||m.packet_loss>0.01||m.bandwidth_util>0.85){c='#f59e0b';up[eid]='warn';}
+    else{up[eid]='ok';}
+    colors[eid]=c;
+    const allN=topoNetwork.body.data.nodes;
+    const nd=allN.get(eid);if(nd)allN.update({id:eid,color:{background:c,border:'#fff'}});
+    for(let i=1;i<=3;i++){const sid='srv-'+domain+'-'+i;const sn=allN.get(sid);if(sn)allN.update({id:sid,color:{background:c+'66',border:c}});}
+  }
+}
+
+/* ── Agents ── */
+async function refreshAgents(){
+  try{
+    const d=await getJSON(`${API}/registry/agents`);
+    $('agentCount').textContent='('+d.count+')';
+    let html='<table class="agent-table"><thead><tr><th>Agent ID</th><th>域</th><th>状态</th><th>类型</th></tr></thead><tbody>';
+    for(const a of d.agents){
+      const isOrch=a.agent_id==='orchestrator-agent', isDiag=/diagnoser|repairer|verifier|reporter/.test(a.agent_id);
+      let type='监控';if(isOrch)type='编排';else if(isDiag)type='分析';
+      html+=`<tr><td><span class="agent-dot ${a.status==='active'?'up':'down'}"></span>${a.agent_id}</td><td>${a.domain||'-'}</td><td><span class="badge ${a.status==='active'?'completed':'pending'}">${a.status==='active'?'● 在线':'○ 离线'}</span></td><td>${type}</td></tr>`;
+    }
+    html+='</tbody></table>';
+    $('agentTable').innerHTML=html;
+  }catch(e){}
+}
+
+/* ── Metrics ── */
+async function refreshMetrics(){
+  try{
+    const d=await getJSON(`${SIM}/simulator/metrics`);
+    const now=new Date().toLocaleTimeString();
+    $('metricsTime').textContent=now;
+    let html='';
+    for(const[domain,m]of Object.entries(d.metrics||{})){
+      const dk=domain.slice(0,-6),cn=DOMAIN_CN[dk];
+      const latOk=m.latency_ms<=100,lossOk=m.packet_loss<=0.01,bwOk=m.bandwidth_util<=0.85;
+      const cls=!latOk||!lossOk?'critical':!bwOk?'warn':'';
+      html+=`<div style="margin-bottom:10px;padding:8px;border-radius:8px;background:#0f172a;border:1px solid ${cls?'var(--red)':'#1e293b'}">`;
+      html+=`<div style="font-weight:700;font-size:0.82em;color:${COLORS[dk]};margin-bottom:6px">${cn} (${domain})</div>`;
+      html+=`<div class="gauge-row">`;
+      html+=`<div class="gauge ${m.latency_ms>100?'warn':''} ${m.latency_ms>200?'critical':''}"><div class="gauge-domain">延迟</div><div class="gauge-val ${m.latency_ms>200?'crit':m.latency_ms>100?'warn':'ok'}">${m.latency_ms.toFixed(1)}</div><div class="gauge-lbl">ms</div></div>`;
+      html+=`<div class="gauge ${m.packet_loss>0.01?'warn':''} ${m.packet_loss>0.05?'critical':''}"><div class="gauge-domain">丢包</div><div class="gauge-val ${m.packet_loss>0.05?'crit':m.packet_loss>0.01?'warn':'ok'}">${(m.packet_loss*100).toFixed(2)}</div><div class="gauge-lbl">%</div></div>`;
+      html+=`<div class="gauge ${m.bandwidth_util>0.85?'warn':''}"><div class="gauge-domain">带宽</div><div class="gauge-val ${m.bandwidth_util>0.85?'warn':'ok'}">${(m.bandwidth_util*100).toFixed(0)}</div><div class="gauge-lbl">%</div></div>`;
+      html+=`<div class="gauge"><div class="gauge-domain">吞吐</div><div class="gauge-val ok">${m.throughput_mbps.toFixed(0)}</div><div class="gauge-lbl">Mbps</div></div>`;
+      html+=`<div class="gauge"><div class="gauge-domain">连接</div><div class="gauge-val ok">${m.connection_count}</div><div class="gauge-lbl">个</div></div>`;
+      html+='</div></div>';
+      // history
+      const h=metricsHistory[domain];if(h){
+        h.labels.push(now);h.latency.push(m.latency_ms);h.loss.push(m.packet_loss);h.bw.push(m.bandwidth_util*100);
+        if(h.labels.length>MAX_H){h.labels.shift();h.latency.shift();h.loss.shift();h.bw.shift();}
+      }
+    }
+    $('metricsPanel').innerHTML=html;
+    updateTopo(d.metrics);
+    updateChart();
+  }catch(e){}
+}
+
+/* ── Chart ── */
+function initChart(){
+  const ctx=$('metricsChart').getContext('2d');
+  chart=new Chart(ctx,{
+    type:'line',
+    data:{labels:[],datasets:[
+      {label:'华东延迟',data:[],borderColor:'#3b82f6',backgroundColor:'#3b82f622',fill:true,tension:0.35,pointRadius:0,borderWidth:2},
+      {label:'华北延迟',data:[],borderColor:'#22c55e',backgroundColor:'#22c55e22',fill:true,tension:0.35,pointRadius:0,borderWidth:2},
+      {label:'华南延迟',data:[],borderColor:'#f59e0b',backgroundColor:'#f59e0b22',fill:true,tension:0.35,pointRadius:0,borderWidth:2},
+      {label:'西南延迟',data:[],borderColor:'#a855f7',backgroundColor:'#a855f722',fill:true,tension:0.35,pointRadius:0,borderWidth:2},
+    ]},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#94a3b8',font:{size:10},boxWidth:12,usePointStyle:true,pointStyle:'circle'}},
+        tooltip:{backgroundColor:'#1e293b',titleColor:'#e2e8f0',bodyColor:'#94a3b8',borderColor:'#334155',borderWidth:1}},
+      scales:{
+        x:{ticks:{color:'#475569',font:{size:8},maxTicksLimit:8},grid:{color:'#111827'}},
+        y:{ticks:{color:'#475569',font:{size:9}},grid:{color:'#111827'},title:{display:true,text:'ms',color:'#64748b'}}
+      },
+      animation:{duration:200},
+      interaction:{intersect:false,mode:'index'}
+    }
+  });
+}
+function updateChart(){
+  if(!chart)return;
+  chart.data.labels=metricsHistory['east-china']?.labels||[];
+  chart.data.datasets[0].data=metricsHistory['east-china']?.latency||[];
+  chart.data.datasets[1].data=metricsHistory['north-china']?.latency||[];
+  chart.data.datasets[2].data=metricsHistory['south-china']?.latency||[];
+  chart.data.datasets[3].data=metricsHistory['west-china']?.latency||[];
+  chart.update('none');
+}
+
+/* ── Message Flow ── */
+async function refreshMessages(){
+  try{
+    const d=await getJSON(`${API}/messages?limit=5`);
+    const msgs=d.messages||[];
+    if(!msgs.length){$('msgCount').textContent='';return;}
+    $('msgCount').textContent='(最近'+msgs.length+')';
+    let html='';
+    for(const m of msgs.slice(0,8)){
+      const t=new Date(m.ts_ms).toLocaleTimeString();
+      const intent=(m.intent||{}).type||'';
+      html+=`<div class="msg-item"><span class="msg-from">${m.from_agent||'?'}</span><span style="color:#334155">→</span><span class="msg-to">${m.to_agent||'广播'}</span><span class="msg-type">${intent}</span><span class="msg-time">${t}</span></div>`;
+    }
+    $('msgFlow').innerHTML=html;
+  }catch(e){}
+}
+
+/* ── DAG ── */
+let _dagBuilt=false, _dagCnt=0;
+async function refreshDags(){
+  try{
+    const d=await getJSON(`${API}/dag`);
+    $('dagCount').textContent='('+d.count+')';
+    if(!d.dags||!d.dags.length){$('dagList').innerHTML='<span style="color:#475569">暂无执行记录</span>';_dagBuilt=false;return;}
+
+    // Only rebuild table when DAG count changes (first load or new DAG added)
+    if(!_dagBuilt || d.count!==_dagCnt){
+      _dagCnt=d.count;
+      const wasExpanded={...expandedDags};
+      let html='<table class="agent-table" id="dagTable"><thead><tr><th>DAG ID</th><th>描述</th><th>状态</th><th>节点</th><th>耗时</th><th>时间</th></tr></thead><tbody>';
+      for(const dag of d.dags.slice(0,10)){
+        const def=dag.definition?JSON.parse(dag.definition):{};
+        const dur=dag.finished_at_ms&&dag.submitted_at_ms?((dag.finished_at_ms-dag.submitted_at_ms)/1000).toFixed(1)+'s':'';
+        html+=`<tr class="dag-row" onclick="toggleDag(event,'${dag.dag_id}')">
+          <td style="color:var(--accent);font-weight:600">${dag.dag_id.slice(-10)}</td>
+          <td>${def.description||'-'}</td>
+          <td><span class="badge dag-status-badge" data-id="${dag.dag_id}">${dag.status}</span></td>
+          <td>${def.nodes?def.nodes.length:0}</td>
+          <td style="font-variant-numeric:tabular-nums">${dur}</td>
+          <td style="color:#475569;font-size:0.9em">${new Date(dag.submitted_at_ms).toLocaleTimeString()}</td>
+        </tr>`;
+        html+=`<tr><td colspan="6" style="padding:0"><div class="dag-detail" id="detail-${dag.dag_id}" style="display:none"></div></td></tr>`;
+      }
+      html+='</tbody></table>';
+      $('dagList').innerHTML=html;
+      _dagBuilt=true;
+      // Restore expanded
+      for(const dagId of Object.keys(wasExpanded)){
+        if(wasExpanded[dagId]){const el=$('detail-'+dagId);if(el){el.style.display='block';loadDagDetail(dagId);}}
+      }
+    }else{
+      // In-place update: only update status badges, don't touch detail divs
+      const badges=document.querySelectorAll('#dagTable .dag-status-badge');
+      for(let i=0;i<Math.min(badges.length,d.dags.length);i++){
+        const dag=d.dags[i], b=badges[i];
+        if(b.dataset.id===dag.dag_id){
+          b.className=`badge dag-status-badge ${dag.status}`;
+          b.textContent=dag.status;
+        }
+      }
+    }
+
+    // Auto-expand running DAGs
+    for(const dag of d.dags){
+      if(dag.status==='running'&&!expandedDags[dag.dag_id]){
+        expandedDags[dag.dag_id]=true;
+        const el=$('detail-'+dag.dag_id);
+        if(el){el.style.display='block';loadDagDetail(dag.dag_id);}
+      }
+    }
+    // Refresh expanded content
+    for(const dagId of Object.keys(expandedDags)){
+      if(expandedDags[dagId])loadDagDetail(dagId);
+    }
+  }catch(e){}
+}
+async function toggleDag(e,dagId){
+  if(e)e.stopPropagation();
+  expandedDags[dagId]=!expandedDags[dagId];
+  const el=$('detail-'+dagId);
+  if(!el)return;
+  if(expandedDags[dagId]){
+    el.style.display='block';
+    loadDagDetail(dagId);
+  }else{
+    el.style.display='none';
+  }
+}
+async function loadDagDetail(dagId){
+  const el=document.getElementById('detail-'+dagId);if(!el)return;
+  if(!el.dataset.loaded)el.innerHTML='<div style="padding:12px;color:#475569"><span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">progress_activity</span> 加载中...</div>';
+  try{
+    const d=await getJSON(`${API}/dag/${dagId}`);dagData[dagId]=d;
+    el.dataset.loaded='1';
+    const nodes=d.nodes||[],result=d.result?JSON.parse(d.result):{};
+    let chain='<div class="node-chain">';
+    for(let i=0;i<nodes.length;i++){
+      const n=nodes[i];const dur=n.finished_at_ms&&n.started_at_ms?((n.finished_at_ms-n.started_at_ms)/1000).toFixed(1)+'s':(n.status==='running'?'进行中...':'');
+      const cls=n.status==='retrying'?'retrying':n.status;
+      chain+=`<div class="node-block ${cls}"><div class="node-title">${n.node_id.split('-')[0]}</div><div class="node-agent">${n.assigned_agent||'...'}</div><span class="badge ${cls}">${n.status}</span>${dur?`<div class="node-dur">${dur}</div>`:''}</div>`;
+      if(i<nodes.length-1)chain+='<span class="arrow">→</span>';
+    }
+    chain+='</div>';
+    // Verdict
+    const vo=result.nodes?.['verify-1']||{};
+    let vhtml='';
+    if(vo.verdict){vhtml=`<div class="verdict ${vo.verdict}">${vo.verdict==='pass'?'<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">check_circle</span> 验证通过 ':vo.verdict==='retry'?'<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">autorenew</span> 需重试 ':'<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">cancel</span> 验证失败'}${vo.message||''}</div>`;}
+    // Narrative
+    const ro=result.nodes?.['report-1']||{};
+    const nar=ro.narrative||ro.summary?.diagnosis_description||'';
+    let nhtml='';
+    if(nar)nhtml=`<div class="narrative"><div style="color:var(--accent);font-weight:700;font-size:0.75em;margin-bottom:4px"><span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">article</span> 智能分析报告</div>${nar}</div>`;
+    // Improvements
+    const imps=ro.improvements||{};let ihtml='';
+    for(const[dom,mets]of Object.entries(imps)){for(const[k,v]of Object.entries(mets)){const pct=v.improvement_pct||0;if(Math.abs(pct)<1)continue;const cn={latency_ms:'延迟',packet_loss:'丢包',bandwidth_util:'带宽'};ihtml+=`<span class="gauge" style="min-width:80px"><span class="gauge-lbl">${DOMAIN_CN[dom.slice(0,5)]||dom} ${cn[k]||k}</span><span class="gauge-val ${pct>0?'ok':'crit'}">${pct>0?'↓':'↑'}${Math.abs(pct).toFixed(0)}%</span></span>`;}}
+    el.innerHTML=chain+vhtml+nhtml+(ihtml?`<div style="padding:6px 0;display:flex;gap:6px;flex-wrap:wrap">${ihtml}</div>`:'');
+  }catch(e){el.innerHTML='<div style="padding:12px;color:var(--red)">加载失败</div>';}
+}
+
+/* ── WS ── */
+let wsRetries=0;
+function connectWS(){
+  try{
+    const ws=new WebSocket('ws://127.0.0.1:8000/ws/dashboard');
+    ws.onopen=()=>{$('wsDot').className='ok';$('wsLabel').textContent='实时推送';wsRetries=0;};
+    ws.onmessage=()=>{refreshAll();};
+    ws.onclose=()=>{$('wsDot').className='off';$('wsLabel').textContent='轮询模式';wsRetries++;setTimeout(connectWS,Math.min(3000*wsRetries,15000));};
+    ws.onerror=()=>ws.close();
+  }catch(e){setTimeout(connectWS,3000);}
+}
+
+/* ── Clock & Refresh ── */
+function updateClock(){$('clock').textContent=new Date().toLocaleString('zh-CN');}
+function refreshAll(){refreshAgents();refreshMetrics();refreshDags();refreshMessages();}
+
+/* ── Init ── */
+connectWS();initTopo();initChart();refreshAll();updateClock();
+setInterval(refreshAll,3000);
+setInterval(updateClock,1000);
+</script>
+</body>
+</html>

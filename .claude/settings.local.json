@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from ioa_middleware.main import app; print\\('Import successful!'\\)\")",
+      "Bash(timeout 10 python run.py)",
+      "Bash(timeout 15 python run.py)",
+      "Bash(timeout 20 python run.py)",
+      "Bash(curl -s http://127.0.0.1:8000/openapi.json)",
+      "Bash(curl -s http://127.0.0.1:8000/docs)",
+      "Bash(sqlite3 *)",
+      "Bash(python *)",
+      "WebSearch",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}

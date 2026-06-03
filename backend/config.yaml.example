@@ -1,0 +1,67 @@
+# IoA 平台配置文件模板
+# 复制此文件为 config.yaml 并填入真实值
+# cp config.yaml.example config.yaml
+
+# LLM 配置
+# provider: deepseek | aliyun — 切换后 LLM 客户端自动适配
+llm:
+  provider: deepseek
+  # DeepSeek 官方 API（OpenAI 兼容）
+  deepseek:
+    api_key: ${DEEPSEEK_API_KEY}  # 从环境变量读取
+    model: deepseek-chat
+    base_url: https://api.deepseek.com/v1
+  # 阿里云 DashScope（备选）
+  qwen_plus:
+    api_key: ${QWEN_API_KEY}  # 从环境变量读取
+    model: qwen-plus
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  qwen_turbo:
+    api_key: ${QWEN_API_KEY}  # 从环境变量读取
+    model: qwen-turbo
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+
+# 中间件端口
+middleware:
+  host: "0.0.0.0"
+  port: 8000
+
+# 模拟器端口
+simulator:
+  host: "0.0.0.0"
+  port: 8001
+
+# 数据库
+database:
+  path: "data/ioa.db"
+
+# WebSocket 推送频率
+ws:
+  metrics_interval_ms: 1000
+  message_buffer_size: 50
+
+# 模拟器配置
+simulator_config:
+  domains: [east-china, north-china, south-china, west-china]
+  update_interval_ms: 1000
+  noise_level: 0.05
+
+# 认证配置
+auth:
+  mode: token
+  pre_shared_key: "${IOA_PSK}"  # 从环境变量读取
+
+# CORS 配置（安全白名单）
+cors:
+  allowed_origins:
+    - "https://xiabai.site"
+    - "http://localhost:8000"
+    - "http://127.0.0.1:8000"
+  allowed_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+  allowed_headers:
+    - "Authorization"
+    - "Content-Type"
