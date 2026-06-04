@@ -358,7 +358,6 @@ async function demoFault(){
     if(d.success||d.status==='ok'){
       log(`<span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle;color:var(--yellow)">bolt</span> 已注入 ${ft} → ${device} (${DOMAIN_CN[dom]||dom})`);
       toast(`故障注入: ${ft} @ ${DOMAIN_CN[dom]||dom}`,'var(--yellow)');
-      loadTopo(); loadMetrics();
     }else{
       throw Error(d.error||d.message||'unknown');
     }
