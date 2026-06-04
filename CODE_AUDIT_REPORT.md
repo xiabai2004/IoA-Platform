@@ -26,7 +26,7 @@
 
 ```yaml
 deepseek:
-    api_key: sk-eef6fae4d2fa496386f94c4df6606a8a  # ❌ 明文密钥
+    api_key: sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # ❌ 明文密钥
 ```
 
 **风险**:
