@@ -237,7 +237,7 @@ TEMPLATES = {
 
 ### 3.4 身份认证
 
-采用 Bearer Token 机制，所有管理API调用需携带 `Authorization: Bearer ioa-dev-only-insecure-key`。
+采用 Bearer Token 机制，所有管理API调用需携带 `Authorization: Bearer <your-psk>`（通过 IOA_PSK 环境变量配置）。
 
 ```python
 # main.py

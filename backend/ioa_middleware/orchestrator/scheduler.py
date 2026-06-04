@@ -62,7 +62,7 @@ class DagScheduler:
 
         # 中间件地址（连接用 localhost，非 bind 地址）
         port = config.get("middleware", {}).get("port", 8000)
-        psk = config.get("auth", {}).get("pre_shared_key", "ioa2026demo")
+        psk = config.get("auth", {}).get("pre_shared_key", "")
         self._middleware_base = f"http://127.0.0.1:{port}"
         self._ws_url = f"ws://127.0.0.1:{port}/messages/ws?agent_id={ORCHESTRATOR_AGENT_ID}&token={psk}"
         self._auth_header = {"Authorization": f"Bearer {psk}"}

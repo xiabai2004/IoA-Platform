@@ -8,6 +8,7 @@
 
 import json
 import logging
+import os
 import secrets
 from fastapi import Request, HTTPException, status
 
@@ -16,20 +17,32 @@ logger = logging.getLogger("auth")
 
 # ── 预共享密钥加载 ────────────────────────────────────────
 
-def _load_psk() -> str:
-    """从配置加载预共享密钥。"""
-    try:
-        from ioa_middleware.config import get_config
-        config = get_config()
-        psk = config.get("auth", {}).get("pre_shared_key", "")
-        if psk:
-            return psk
-    except Exception as e:
-        logger.warning("Failed to load PSK from config: %s", e)
+def _get_psk_unsafe(config: dict) -> str:
+    """Get pre-shared key from environment or config. Rejects known weak defaults."""
+    psk = os.environ.get("IOA_PSK") or config.get("auth", {}).get("pre_shared_key", "")
 
-    # 开发环境默认值（生产环境必须设置环境变量）
-    logger.warning("Using insecure default PSK. Set IOA_PSK environment variable for production.")
-    return "ioa-dev-only-insecure-key"
+    if not psk:
+        raise RuntimeError(
+            "IOA_PSK not configured. Set the IOA_PSK environment variable "
+            "or auth.pre_shared_key in config.yaml with a strong random key.\n"
+            "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+        )
+
+    WEAK_KEYS = {"ioa-dev-only-insecure-key", "ioa2026demo", "changeme", "admin", "password"}
+    if psk.lower() in WEAK_KEYS or psk in WEAK_KEYS:
+        raise RuntimeError(
+            f"Insecure PSK detected. Please replace '{psk}' with a strong random key.\n"
+            "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+        )
+
+    return psk
+
+
+def _load_psk() -> str:
+    """从配置加载预共享密钥，拒绝弱密钥。"""
+    from ioa_middleware.config import get_config
+    config = get_config()
+    return _get_psk_unsafe(config)
 
 
 _PRE_SHARED_KEY = _load_psk()

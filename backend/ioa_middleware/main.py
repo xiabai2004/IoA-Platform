@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -155,14 +156,21 @@ Authorization: Bearer <pre_shared_key>
         lifespan=lifespan,
     )
 
-    # CORS 配置 - 使用安全白名单
+    # CORS 配置 - 环境感知
     cors_config = config.get("cors", {})
+    origins = cors_config.get("allowed_origins", ["http://localhost:3000"])
+
+    # 生产环境只允许 HTTPS 来源
+    if os.environ.get("IOA_ENV") == "production":
+        origins = [o for o in origins if o.startswith("https://")]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=cors_config.get("allowed_origins", ["http://localhost:8000"]),
+        allow_origins=origins,
         allow_methods=cors_config.get("allowed_methods", ["GET", "POST"]),
-        allow_headers=cors_config.get("allowed_headers", ["Authorization", "Content-Type"]),
+        allow_headers=cors_config.get("allowed_headers", ["Authorization", "Content-Type", "X-Request-ID"]),
         allow_credentials=True,
+        max_age=3600,
     )
 
     # 注册认证中间件（在 CORS 之后）

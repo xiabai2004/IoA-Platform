@@ -285,7 +285,20 @@ select{padding:6px 10px;border-radius:8px;border:1px solid var(--border);backgro
 <script>
 const API=window.location.origin||'http://127.0.0.1:8000';
 const SIM=API.replace(/:\d+$/,'') + ':8001' || 'http://127.0.0.1:8001';
-const AUTH_TOKEN='ioa-dev-only-insecure-key';const AUTH={'Authorization':'Bearer '+AUTH_TOKEN};
+// Auth token - stored in localStorage, configured on first use
+const AUTH_TOKEN = localStorage.getItem('ioa_auth_token') || '';
+const AUTH = AUTH_TOKEN ? {'Authorization': 'Bearer ' + AUTH_TOKEN} : {};
+
+// If no token set, prompt user (shown once)
+if (!AUTH_TOKEN) {
+    setTimeout(function() {
+        var token = prompt('Enter IoA Platform Auth Token (set via IOA_PSK):');
+        if (token) {
+            localStorage.setItem('ioa_auth_token', token);
+            location.reload();
+        }
+    }, 500);
+}
 const DOMAINS=['east-china','north-china','south-china','west-china'];
 const DOMAIN_CN={'east-china':'华东','north-china':'华北','south-china':'华南','west-china':'西南'};
 const COLORS={'east-china':'#3b82f6','north-china':'#22c55e','south-china':'#f59e0b','west-china':'#a855f7'};

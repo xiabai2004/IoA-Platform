@@ -194,21 +194,13 @@ def _validate_config(config: dict) -> None:
             "LLM features will be disabled."
         )
 
-    # 检查认证密钥
-    psk = config.get("auth", {}).get("pre_shared_key", "")
-    if not psk:
-        logger.error(
-            "Pre-shared key not set! "
-            "Set IOA_PSK environment variable. "
-            "Using insecure default key for development only."
-        )
-        config["auth"]["pre_shared_key"] = "ioa-dev-only-insecure-key"
-    elif psk == "ioa2026demo":
-        logger.warning(
-            "Using default pre-shared key 'ioa2026demo'. "
-            "This is insecure for production. "
-            "Set IOA_PSK environment variable with a strong key."
-        )
+    # PSK — must be set via environment, no hardcoded default
+    psk = os.environ.get("IOA_PSK")
+    if psk:
+        config["auth"]["pre_shared_key"] = psk
+    elif not config.get("auth", {}).get("pre_shared_key"):
+        config.setdefault("auth", {})
+        config["auth"]["pre_shared_key"] = ""  # Empty → will trigger RuntimeError at auth check
 
 
 # 全局配置单例

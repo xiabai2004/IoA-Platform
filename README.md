@@ -171,7 +171,7 @@ full_remediation DAG 从注入故障到验证通过，端到端耗时约 **6秒*
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| `/registry/agents` | GET | Agent列表（Bearer ioa-dev-only-insecure-key） |
+| `/registry/agents` | GET | Agent列表（Bearer &lt;PSK&gt;，需配置 IOA_PSK 环境变量） |
 | `/dag` | POST | 创建DAG |
 | `/dag/{dag_id}` | GET | 查询DAG状态 |
 | `/messages` | POST | 发送IoAP消息（NL指令入口） |

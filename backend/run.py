@@ -46,9 +46,12 @@ async def main():
     logger.info("=" * 60)
 
     # 安全检查
-    psk = config.get("auth", {}).get("pre_shared_key", "")
-    if not psk or psk == "ioa-dev-only-insecure-key":
-        logger.warning("⚠️  Running with insecure default PSK. Set IOA_PSK environment variable for production.")
+    from ioa_middleware.auth import _get_psk_unsafe
+    try:
+        _get_psk_unsafe(config)
+        logger.info("✅ PSK validated successfully.")
+    except RuntimeError as e:
+        logger.warning("⚠️  PSK check failed: %s", e)
 
     # 1. 启动模拟器（独立端口，仅本地访问）
     sim_cfg = uvicorn.Config(

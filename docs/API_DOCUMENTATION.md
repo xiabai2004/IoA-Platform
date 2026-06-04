@@ -729,7 +729,7 @@ GET /simulator/faults
 import httpx
 
 BASE_URL = "http://127.0.0.1:8000"
-AUTH_HEADER = {"Authorization": "Bearer ioa-dev-only-insecure-key"}
+AUTH_HEADER = {"Authorization": "Bearer <your-psk>"}
 
 # 发送消息
 async def send_message():
@@ -760,7 +760,7 @@ async def query_agents():
 
 ```javascript
 const BASE_URL = 'http://127.0.0.1:8000';
-const AUTH_HEADER = {'Authorization': 'Bearer ioa-dev-only-insecure-key'};
+const AUTH_HEADER = {'Authorization': 'Bearer <your-psk>'};
 
 // WebSocket 连接
 const ws = new WebSocket(`${BASE_URL.replace('http', 'ws')}/messages/ws?agent_id=my-agent`);
