@@ -100,8 +100,12 @@ class TokenAuthMiddleware:
 
         path = scope.get("path", "")
 
-        # WebSocket 连接需要验证 token
+        # WebSocket 连接需要验证 token（开放路径除外）
         if scope["type"] == "websocket":
+            # Dashboard WS 放行
+            if path.startswith("/ws/dashboard"):
+                await self.app(scope, receive, send)
+                return
             # 从 query 参数中提取 token
             query_string = scope.get("query_string", b"").decode()
             params = dict(p.split("=") for p in query_string.split("&") if "=" in p)

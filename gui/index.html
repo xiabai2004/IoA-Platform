@@ -346,14 +346,24 @@ async function sendNL(){
 
 async function demoFault(){
   const ft=$('faultType').value, dom=$('faultDomain').value;
+  // Map domain to device/link target based on fault type
+  const DEVICE_MAP={'east-china':'Edge-R1','north-china':'Edge-R2','south-china':'Edge-R3','west-china':'Edge-R4'};
+  const device=DEVICE_MAP[dom]||dom;
+  const DEVICE_FAULTS=['cpu_overload','misconfig','device_failure','ddos'];
+  const target=DEVICE_FAULTS.includes(ft) ? device : `Core-Router->${device}`;
   try{
-    const r=await fetch(`${SIM}/simulator/fault/inject?fault_type=${ft}&target=${dom}`,{method:'POST'});
+    const r=await fetch(`${SIM}/simulator/fault/inject?fault_type=${ft}&target=${encodeURIComponent(target)}`,{method:'POST'});
     if(!r.ok)throw Error(r.status);
     const d=await r.json();
-    log(`<span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle;color:var(--yellow)">bolt</span> 已注入 ${ft} → ${dom}`);
-    toast(`故障注入: ${ft} @ ${dom}`,'var(--yellow)');
+    if(d.success||d.status==='ok'){
+      log(`<span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle;color:var(--yellow)">bolt</span> 已注入 ${ft} → ${device} (${DOMAIN_CN[dom]||dom})`);
+      toast(`故障注入: ${ft} @ ${DOMAIN_CN[dom]||dom}`,'var(--yellow)');
+      loadTopo(); loadMetrics();
+    }else{
+      throw Error(d.error||d.message||'unknown');
+    }
   }catch(e){
-    log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--red)">cancel</span> ${esc(e.message)}`);
+    log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--red)">cancel</span> 注入失败: ${esc(e.message)}`);
   }
 }
 
