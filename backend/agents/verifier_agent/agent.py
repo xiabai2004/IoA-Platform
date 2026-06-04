@@ -26,6 +26,7 @@ import time
 import logging
 from agents.base_agent import BaseAgent
 from agents.tool_client import HttpToolClient, TOOL_GET_ALL_METRICS
+from ioa_middleware.bus import MessageBus
 
 logger = logging.getLogger("verifier_agent")
 
@@ -50,15 +51,15 @@ MAX_VERIFY_RETRIES = 3  # 最多重试验证 3 次
 class VerifyAgent(BaseAgent):
     """闭环验证 Agent — 修复后指标判定 + 状态机。"""
 
-    def __init__(self, agent_id: str = "verifier-global", tool_client=None, config: dict | None = None):
+    def __init__(self, bus: MessageBus, config: dict | None = None):
         super().__init__(
-            agent_id=agent_id,
+            agent_id="verifier-global",
             domain="global",
-            capabilities=["verify"],
-            tool_client=tool_client or HttpToolClient(),
-            description="闭环验证 Agent，修复后指标三态判定（pass/retry/fail）+ 实时兜底",
-            supported_tasks=["metrics_verification", "health_check"],
+            capability="verify",
+            bus=bus,
+            config=config,
         )
+        self.tool_client = HttpToolClient()
 
     # ── 消息处理 ──────────────────────────────────────
 
@@ -101,7 +102,7 @@ class VerifyAgent(BaseAgent):
             if realtime_pass:
                 logger.info("VerifyAgent: domain=%s REALTIME PASS (current metrics all normal, retry=%d)",
                             target_domain, retry_count)
-                result = {
+                return {
                     "success": True,
                     "output": {
                         "verdict": "pass",
@@ -118,8 +119,6 @@ class VerifyAgent(BaseAgent):
                         "retry_count": retry_count,
                     },
                 }
-                await self.send_result(correlation_id, dag_id, node_id, result)
-                return
 
             # 3. 常规验证判定（before/after 对比）
             verdict_data = self._evaluate(metrics_before, metrics_after, target_domain, retry_count)
@@ -172,7 +171,7 @@ class VerifyAgent(BaseAgent):
                 "error": str(e),
             }
 
-        await self.send_result(correlation_id, dag_id, node_id, result)
+        return result
 
     # ── 实时指标兜底判定 ──────────────────────────────
 

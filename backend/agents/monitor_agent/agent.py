@@ -10,6 +10,7 @@
 
 from agents.base_agent import BaseAgent
 from agents.tool_client import HttpToolClient, TOOL_GET_METRICS
+from ioa_middleware.bus import MessageBus
 
 # ── 异常阈值 ─────────────────────────────────────────────
 
@@ -23,30 +24,29 @@ ANOMALY_THRESHOLDS = {
 class MonitorAgent(BaseAgent):
     """域监控 Agent — 指标采集 + 阈值异常检测。"""
 
-    def __init__(self, agent_id: str, domain: str, tool_client=None, config: dict | None = None,
-                 description: str = "", supported_tasks: list[str] | None = None):
+    def __init__(self, bus: MessageBus, agent_id: str, domain: str, config: dict | None = None):
         super().__init__(
             agent_id=agent_id,
             domain=domain,
-            capabilities=["monitor"],
-            tool_client=tool_client or HttpToolClient(),
-            description=description,
-            supported_tasks=supported_tasks,
+            capability="monitor",
+            bus=bus,
+            config=config,
         )
+        self.tool_client = HttpToolClient()
         self._domain = domain
 
     # ── 消息处理 ──────────────────────────────────────
 
-    async def handle_message(self, msg: dict) -> None:
+    async def handle_message(self, topic: str, message: dict) -> dict:
         """处理 task 消息：采集指标 → 异常检测 → 返回结果。"""
-        intent = msg.get("intent", {})
+        intent = message.get("intent", {})
         if intent.get("type") != "task":
-            return
+            return {"success": False, "error": "not_a_task"}
 
-        payload = msg.get("payload", {})
+        payload = message.get("payload", {})
         dag_id = payload.get("dag_id", "")
         node_id = payload.get("node_id", "")
-        correlation_id = msg.get("correlation_id", "")
+        correlation_id = message.get("correlation_id", "")
         params = payload.get("params", {})
 
         # 使用参数中的 domain，否则用本 Agent 的 domain
@@ -84,7 +84,7 @@ class MonitorAgent(BaseAgent):
             }
 
         # 3. 返回结果给 orchestrator
-        await self.send_result(correlation_id, dag_id, node_id, result)
+        return result
 
     # ── 异常检测 ──────────────────────────────────────
 
@@ -121,23 +121,16 @@ class MonitorAgent(BaseAgent):
 MONITOR_DOMAINS = ["east-china", "north-china", "south-china", "west-china"]
 
 
-def create_monitor_agents(config: dict) -> list[MonitorAgent]:
+def create_monitor_agents(bus: MessageBus, config: dict) -> list[MonitorAgent]:
     """为每个域创建一个 Monitor Agent。"""
     agents = []
     for domain in MONITOR_DOMAINS:
         agent_id = f"monitor-{domain}"
-        tool_client = HttpToolClient()
-        domain_desc = {
-            "east-china": "华东域", "north-china": "华北域",
-            "south-china": "华南域", "west-china": "西南域",
-        }
         agent = MonitorAgent(
+            bus=bus,
             agent_id=agent_id,
             domain=domain,
-            tool_client=tool_client,
             config=config,
-            description=f"{domain_desc.get(domain, domain)}网络指标监控 Agent，采集延迟/丢包/带宽指标并检测异常",
-            supported_tasks=["metrics_collection", "anomaly_detection"],
         )
         agents.append(agent)
     print(f"[Factory] Created {len(agents)} Monitor Agents")

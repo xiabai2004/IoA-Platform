@@ -21,6 +21,7 @@ from collections import deque
 import httpx
 import websockets
 
+from ioa_middleware.bus import MessageBus
 from ioa_middleware.orchestrator.models import (
     DagDefinition,
     DagNodeDef,
@@ -30,7 +31,7 @@ from ioa_middleware.orchestrator.models import (
     DagNodeState,
 )
 from ioa_middleware.orchestrator import store
-from ioa_middleware.router.weighted_router import WeightedRouter
+from ioa_middleware.router import SmartRouter
 
 logger = logging.getLogger("orchestrator.scheduler")
 
@@ -44,13 +45,14 @@ class DagScheduler:
     """DAG 调度器单例。
 
     生命周期：
-        scheduler = DagScheduler(config)
+        scheduler = DagScheduler(bus, config)
         await scheduler.start()   # 连接 WS + 启动调度循环
         scheduler.submit(dag_def) # 提交 DAG
         await scheduler.stop()    # 关闭连接
     """
 
-    def __init__(self, config: dict):
+    def __init__(self, bus: MessageBus, config: dict):
+        self._bus = bus
         self._config = config
         self._http = httpx.AsyncClient(timeout=30.0)
         self._ws: websockets.WebSocketClientProtocol | None = None
@@ -65,8 +67,8 @@ class DagScheduler:
         self._ws_url = f"ws://127.0.0.1:{port}/messages/ws?agent_id={ORCHESTRATOR_AGENT_ID}&token={psk}"
         self._auth_header = {"Authorization": f"Bearer {psk}"}
 
-        # 语义路由引擎
-        self._router = WeightedRouter()
+        # 语义路由引擎（SmartRouter 自动选择最佳可用引擎）
+        self._router = SmartRouter()
 
         # 日志退避计数器：node_id → 连续无 Agent 次数
         self._no_agent_count: dict[str, int] = {}
@@ -557,8 +559,8 @@ def get_scheduler() -> DagScheduler:
     return _scheduler
 
 
-def init_scheduler(config: dict) -> DagScheduler:
+def init_scheduler(bus: MessageBus, config: dict) -> DagScheduler:
     """初始化调度器单例。"""
     global _scheduler
-    _scheduler = DagScheduler(config)
+    _scheduler = DagScheduler(bus, config)
     return _scheduler

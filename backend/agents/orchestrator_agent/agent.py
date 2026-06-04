@@ -15,6 +15,7 @@ import httpx
 from agents.base_agent import BaseAgent
 from agents.tool_client import HttpToolClient
 from agents.llm_client import get_llm_client
+from ioa_middleware.bus import MessageBus
 from ioa_middleware.orchestrator.templates import match_template, TEMPLATES
 from agents.orchestrator_agent.workflow import run_orchestrator_workflow
 
@@ -31,15 +32,15 @@ DOMAIN_ALIASES = {
 class OrchestratorAgent(BaseAgent):
     """编排 Agent — 自然语言 → DAG。"""
 
-    def __init__(self, agent_id: str = "orchestrator-agent", config: dict | None = None):
+    def __init__(self, bus: MessageBus, config: dict | None = None):
         super().__init__(
-            agent_id=agent_id,
+            agent_id="orchestrator-agent",
             domain="global",
-            capabilities=["orchestrate"],
-            tool_client=HttpToolClient(),
-            description="编排入口 Agent，将自然语言运维指令解析为 DAG 任务图并调度执行",
-            supported_tasks=["intent_parsing", "dag_orchestration"],
+            capability="orchestrate",
+            bus=bus,
+            config=config,
         )
+        self.tool_client = HttpToolClient()
         self._llm = get_llm_client(config)
         # DAG 提交地址
         port = (config or {}).get("middleware", {}).get("port", 8000)
@@ -51,14 +52,14 @@ class OrchestratorAgent(BaseAgent):
 
     # ── 消息处理 ──────────────────────────────────────
 
-    async def handle_message(self, msg: dict) -> None:
+    async def handle_message(self, topic: str, message: dict) -> dict:
         """处理 task / user 消息：解析 NL → 提交 DAG → 返回 dag_id。"""
-        intent = msg.get("intent", {})
+        intent = message.get("intent", {})
         msg_type = intent.get("type", "")
 
-        payload = msg.get("payload", {})
+        payload = message.get("payload", {})
         params = payload.get("params", {})
-        correlation_id = msg.get("correlation_id", "")
+        correlation_id = message.get("correlation_id", "")
         dag_id_existing = payload.get("dag_id", "")
         node_id = payload.get("node_id", "")
 
@@ -72,7 +73,7 @@ class OrchestratorAgent(BaseAgent):
 
         if not user_input:
             print(f"[{self.agent_id}] No user input in message, skipping")
-            return
+            return {"success": False, "error": "no_user_input"}
 
         print(f"[{self.agent_id}] Processing: {user_input[:80]}...")
 
@@ -136,17 +137,8 @@ class OrchestratorAgent(BaseAgent):
                 "error": str(e),
             }
 
-        # 5. 如果有 dag_id/node_id（作为 DAG 节点调用），返回结果
-        if dag_id_existing or node_id:
-            await self.send_result(correlation_id, dag_id_existing, node_id, result)
-        else:
-            # 直接对话模式：发送报告
-            await self.send_message(
-                intent={"type": "report", "description": f"DAG {dag_id} submitted"},
-                payload=result,
-                correlation_id=correlation_id,
-                to_agent=msg.get("from_agent"),
-            )
+        # 5. 返回结果（通过 bus reply 机制自动返回给调用者）
+        return result
 
     # ── 意图解析 ──────────────────────────────────────
 
@@ -229,6 +221,6 @@ class OrchestratorAgent(BaseAgent):
 
 # ── 工厂 ─────────────────────────────────────────────
 
-def create_orchestrator_agent(config: dict) -> OrchestratorAgent:
+def create_orchestrator_agent(bus: MessageBus, config: dict) -> OrchestratorAgent:
     """创建 Orchestrator Agent（全局，单个实例）。"""
-    return OrchestratorAgent(config=config)
+    return OrchestratorAgent(bus=bus, config=config)

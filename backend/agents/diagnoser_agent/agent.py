@@ -10,6 +10,7 @@ import json
 from agents.base_agent import BaseAgent
 from agents.tool_client import HttpToolClient, TOOL_GET_ALL_METRICS, TOOL_GET_TOPOLOGY
 from agents.llm_client import get_llm_client
+from ioa_middleware.bus import MessageBus
 
 # ── 症状 → 故障类型映射 ─────────────────────────────────
 
@@ -80,29 +81,29 @@ SYMPTOM_RULES = [
 class DiagnoserAgent(BaseAgent):
     """根因分析 Agent — 规则引擎 + LLM 增强。"""
 
-    def __init__(self, agent_id: str = "diagnoser-global", tool_client=None, config: dict | None = None):
+    def __init__(self, bus: MessageBus, config: dict | None = None):
         super().__init__(
-            agent_id=agent_id,
+            agent_id="diagnoser-global",
             domain="global",
-            capabilities=["diagnose"],
-            tool_client=tool_client or HttpToolClient(),
-            description="全局故障根因分析 Agent，基于规则引擎+LLM 增强定位故障来源",
-            supported_tasks=["root_cause_analysis", "fault_localization"],
+            capability="diagnose",
+            bus=bus,
+            config=config,
         )
+        self.tool_client = HttpToolClient()
         self._llm = get_llm_client(config)
 
     # ── 消息处理 ──────────────────────────────────────
 
-    async def handle_message(self, msg: dict) -> None:
+    async def handle_message(self, topic: str, message: dict) -> dict:
         """处理 task 消息：收集上下文 → 根因分析 → 返回诊断。"""
-        intent = msg.get("intent", {})
+        intent = message.get("intent", {})
         if intent.get("type") != "task":
-            return
+            return {"success": False, "error": "not_a_task"}
 
-        payload = msg.get("payload", {})
+        payload = message.get("payload", {})
         dag_id = payload.get("dag_id", "")
         node_id = payload.get("node_id", "")
-        correlation_id = msg.get("correlation_id", "")
+        correlation_id = message.get("correlation_id", "")
         params = payload.get("params", {})
 
         # 从前置 Monitor 节点结果中提取异常数据
@@ -150,7 +151,7 @@ class DiagnoserAgent(BaseAgent):
                 "error": str(e),
             }
 
-        await self.send_result(correlation_id, dag_id, node_id, result)
+        return result
 
     # ── 规则诊断 ──────────────────────────────────────
 
@@ -210,6 +211,6 @@ class DiagnoserAgent(BaseAgent):
 
 # ── 工厂 ─────────────────────────────────────────────
 
-def create_diagnoser_agent(config: dict) -> DiagnoserAgent:
+def create_diagnoser_agent(bus: MessageBus, config: dict) -> DiagnoserAgent:
     """创建 Diagnoser Agent（全局，单个实例）。"""
-    return DiagnoserAgent(config=config)
+    return DiagnoserAgent(bus=bus, config=config)

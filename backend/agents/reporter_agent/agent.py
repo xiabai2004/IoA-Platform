@@ -3,42 +3,43 @@
 收集 Monitor → Diagnoser → Repairer 的完整执行链数据，
 生成结构化总结报告。
 
-工厂函数: create_reporter_agent(config) → ReporterAgent
 """
 
 import json
 import time
+from typing import Any
 from agents.base_agent import BaseAgent
 from agents.tool_client import HttpToolClient, TOOL_GET_ALL_METRICS
 from agents.llm_client import get_llm_client
+from ioa_middleware.bus import MessageBus
 
 
 class ReporterAgent(BaseAgent):
     """报告生成 Agent — 汇总全链路数据 → 生成报告。"""
 
-    def __init__(self, agent_id: str = "reporter-global", tool_client=None, config: dict | None = None):
+    def __init__(self, bus: MessageBus, config: dict | None = None):
         super().__init__(
-            agent_id=agent_id,
+            agent_id="reporter-global",
             domain="global",
-            capabilities=["report"],
-            tool_client=tool_client or HttpToolClient(),
-            description="全链路运维报告生成 Agent，汇总监控→诊断→修复数据生成结构化报告",
-            supported_tasks=["report_generation", "data_summarization"],
+            capability="report",
+            bus=bus,
+            config=config,
         )
+        self.tool_client = HttpToolClient()
         self._llm = get_llm_client(config)
 
     # ── 消息处理 ──────────────────────────────────────
 
-    async def handle_message(self, msg: dict) -> None:
+    async def handle_message(self, topic: str, message: dict[str, Any]) -> dict[str, Any]:
         """处理 task 消息：收集上下文 → 生成报告 → 返回。"""
-        intent = msg.get("intent", {})
+        intent = message.get("intent", {})
         if intent.get("type") != "task":
-            return
+            return {}
 
-        payload = msg.get("payload", {})
+        payload = message.get("payload", {})
         dag_id = payload.get("dag_id", "")
         node_id = payload.get("node_id", "")
-        correlation_id = msg.get("correlation_id", "")
+        correlation_id = message.get("correlation_id", "")
         params = payload.get("params", {})
 
         print(f"[{self.agent_id}] Generating report (dag={dag_id}, node={node_id})")
@@ -71,7 +72,8 @@ class ReporterAgent(BaseAgent):
                 "error": str(e),
             }
 
-        await self.send_result(correlation_id, dag_id, node_id, result)
+        # Return result via the reply mechanism (set by _on_message)
+        return result
 
     # ── 报告生成 ──────────────────────────────────────
 
@@ -224,8 +226,3 @@ class ReporterAgent(BaseAgent):
         return await self._llm.ask(prompt)
 
 
-# ── 工厂 ─────────────────────────────────────────────
-
-def create_reporter_agent(config: dict) -> ReporterAgent:
-    """创建 Reporter Agent（全局，单个实例）。"""
-    return ReporterAgent(config=config)

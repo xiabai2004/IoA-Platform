@@ -15,33 +15,34 @@ from agents.tool_client import (
     TOOL_CLEAR_ALL_FAULTS,
     TOOL_LIST_FAULTS,
 )
+from ioa_middleware.bus import MessageBus
 
 
 class RepairerAgent(BaseAgent):
     """修复执行 Agent — 清除故障 + 验证修复效果。"""
 
-    def __init__(self, agent_id: str = "repairer-global", tool_client=None, config: dict | None = None):
+    def __init__(self, bus: MessageBus, config: dict | None = None):
         super().__init__(
-            agent_id=agent_id,
+            agent_id="repairer-global",
             domain="global",
-            capabilities=["repair"],
-            tool_client=tool_client or HttpToolClient(),
-            description="全局故障修复执行 Agent，清除故障并采集修复后指标",
-            supported_tasks=["fault_remediation", "fault_clearance"],
+            capability="repair",
+            bus=bus,
+            config=config,
         )
+        self.tool_client = HttpToolClient()
 
     # ── 消息处理 ──────────────────────────────────────
 
-    async def handle_message(self, msg: dict) -> None:
+    async def handle_message(self, topic: str, message: dict) -> dict:
         """处理 task 消息：读取诊断 → 执行修复 → 采集修复后指标 → 返回结果。"""
-        intent = msg.get("intent", {})
+        intent = message.get("intent", {})
         if intent.get("type") != "task":
-            return
+            return {"success": False, "error": "not_a_task"}
 
-        payload = msg.get("payload", {})
+        payload = message.get("payload", {})
         dag_id = payload.get("dag_id", "")
         node_id = payload.get("node_id", "")
-        correlation_id = msg.get("correlation_id", "")
+        correlation_id = message.get("correlation_id", "")
         params = payload.get("params", {})
 
         # 从前置 Diagnoser / Monitor 结果中获取上下文
@@ -108,7 +109,7 @@ class RepairerAgent(BaseAgent):
                 "error": str(e),
             }
 
-        await self.send_result(correlation_id, dag_id, node_id, result)
+        return result
 
     # ── 修复执行 ──────────────────────────────────────
 
@@ -141,6 +142,6 @@ class RepairerAgent(BaseAgent):
 
 # ── 工厂 ─────────────────────────────────────────────
 
-def create_repairer_agent(config: dict) -> RepairerAgent:
+def create_repairer_agent(bus: MessageBus, config: dict) -> RepairerAgent:
     """创建 Repairer Agent（全局，单个实例）。"""
-    return RepairerAgent(config=config)
+    return RepairerAgent(bus=bus, config=config)

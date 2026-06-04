@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ioa_middleware.config import get_config
+from ioa_middleware.bus import create_bus
 from ioa_middleware.db import init_db, close_db
 from ioa_middleware.registry.api import router as registry_router
 from ioa_middleware.registry.health import health_check_loop
@@ -32,20 +33,25 @@ async def lifespan(app: FastAPI):
     # ── 启动 ──
     config = get_config()
 
+    # Create message bus
+    bus = create_bus(config)
+    await bus.connect()
+    app.state.bus = bus
+
     await init_db(config["database"]["path"])
 
     # 启动后台任务
     asyncio.create_task(health_check_loop())
 
     # Phase 3: 启动 DAG 调度器
-    init_scheduler(config)
+    init_scheduler(bus, config)
     scheduler = get_scheduler()
     asyncio.create_task(scheduler.start())
     print("[Scheduler] DAG scheduler started")
 
     # Phase 4: 启动所有 Agent
     from agents import create_all_agents
-    agents = create_all_agents(config)
+    agents = create_all_agents(bus, config)
     for a in agents:
         asyncio.create_task(a.start())
     # 给 Agent 一点时间注册
@@ -55,6 +61,13 @@ async def lifespan(app: FastAPI):
     yield
 
     # ── 关闭 ──
+    # Stop agents
+    for a in agents:
+        try:
+            await a.stop()
+        except Exception:
+            pass
+    await bus.close()
     try:
         scheduler = get_scheduler()
         await scheduler.stop()
