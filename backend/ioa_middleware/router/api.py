@@ -369,6 +369,36 @@ async def reset_bandit():
     return {"status": "ok", "message": "Bandit statistics reset"}
 
 
+# ── Reranker 状态端点 ──────────────────────────────────
+
+@router.get("/reranker/status")
+async def get_reranker_status():
+    """获取 Cross-Encoder Reranker 的状态。
+
+    答辩时展示：Bi-Encoder vs Cross-Encoder 的架构对比和可用性状态。
+
+    ### 返回
+    ```json
+    {
+      "available": true,
+      "model": "BAAI/bge-reranker-v2-m3",
+      "description": "Cross-Encoder 联合编码精排，在 Bi-Encoder 粗筛后对 Top-3 重排序"
+    }
+    ```
+    """
+    from ioa_middleware.router.reranker import get_reranker
+    reranker = get_reranker()
+    return {
+        "available": reranker.available,
+        "model": reranker.model_name,
+        "description": (
+            "Cross-Encoder 联合编码精排：将 [任务描述, Agent能力描述] 拼接后"
+            "一起送入模型做联合推理，精度显著优于 Bi-Encoder 的独立余弦相似度。"
+            "在 Bi-Encoder 粗筛 Top-3 后执行，兼顾效率与精度。"
+        ),
+    }
+
+
 # ── WebSocket 端点 ────────────────────────────────────────
 
 @router.websocket("/ws")

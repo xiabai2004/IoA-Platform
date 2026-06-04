@@ -149,13 +149,30 @@ class EmbeddingRouter:
 
         scored.sort(key=lambda x: x[0], reverse=True)
 
+        # ── Cross-Encoder 精排（如果可用）─────────────────
+        reranked = False
+        if len(scored) > 1:
+            from ioa_middleware.router.reranker import get_reranker
+            reranker = get_reranker()
+            if reranker.available:
+                top_k = min(3, len(scored))
+                reranked_scored = reranker.rerank(task_desc, scored[:top_k])
+                # 替换 Top-K 段
+                scored[:top_k] = reranked_scored
+                # 重新确保排序一致性
+                scored.sort(key=lambda x: x[0], reverse=True)
+                reranked = True
+                logger.info(
+                    "EmbeddingRouter: Cross-Encoder reranked top-%d candidates", top_k
+                )
+
         best_score, best_agent = scored[0]
         logger.info(
-            "EmbeddingRouter: selected %s (score=%.3f, domain=%s, load=%.2f) "
+            "EmbeddingRouter: selected %s (score=%.3f, domain=%s, load=%.2f, reranked=%s) "
             "from %d candidates for cap=%s",
             best_agent.get("agent_id"), best_score,
             best_agent.get("domain"), best_agent.get("load", 0),
-            len(filtered), capability,
+            reranked, len(filtered), capability,
         )
         return best_agent
 
