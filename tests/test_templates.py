@@ -29,7 +29,7 @@ class TestTemplateMatching:
         """测试仅诊断模板匹配"""
         template_name, template_meta, score = match_template("请诊断华北地区网络问题")
         # 应该匹配到诊断相关模板
-        assert template_name in ["diagnose_only", "full_remediation"]
+        assert template_name in ["diagnose", "full_remediation"]
 
     def test_templates_have_required_fields(self):
         """测试模板包含必要字段"""
