@@ -54,6 +54,9 @@ _OPEN_PREFIXES = (
     "/redoc",
     "/health",
     "/gui",
+    "/ws",
+    "/messages/bandit",
+    "/messages/reranker",
 )
 
 # 无需认证的精确路径

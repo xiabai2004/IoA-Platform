@@ -53,6 +53,35 @@ async def lifespan(app: FastAPI):
     # Phase 4: 启动所有 Agent
     from agents import create_all_agents
     agents = create_all_agents(bus, config)
+
+    # 桥接：将总线消息路由到注册中心
+    from ioa_middleware.registry import store as registry_store
+    from ioa_middleware.registry.models import CapabilityProfile
+    import json
+
+    async def on_register(_topic: str, msg: dict) -> None:
+        """处理 Agent 注册消息并写入 DB。"""
+        try:
+            profile = CapabilityProfile(
+                agent_id=msg["agent_id"],
+                domain=msg.get("domain", "global"),
+                capabilities=[msg.get("capability", "")],
+                status="active",
+            )
+            await registry_store.register_agent(profile)
+        except Exception:
+            pass
+
+    async def on_heartbeat(_topic: str, msg: dict) -> None:
+        """处理 Agent 心跳消息。"""
+        try:
+            await registry_store.heartbeat(msg["agent_id"])
+        except Exception:
+            pass
+
+    await bus.subscribe("registry.register", on_register)
+    await bus.subscribe("registry.heartbeat", on_heartbeat)
+
     for a in agents:
         asyncio.create_task(a.start())
     # 给 Agent 一点时间注册
