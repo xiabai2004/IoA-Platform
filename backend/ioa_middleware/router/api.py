@@ -182,8 +182,7 @@ async def post_message(msg: dict, request: Request):
     to_agent = msg.get("to_agent")
     delivered = False
     if to_agent:
-        delivered = await _push_to_agent(to_agent, msg)
-        # Also publish to message bus (agents listen on bus topics)
+        # Publish to message bus FIRST (all agents use bus now)
         bus = getattr(request.app.state, "bus", None)
         if bus is not None:
             try:
@@ -191,8 +190,11 @@ async def post_message(msg: dict, request: Request):
                 delivered = True
             except Exception:
                 pass
+        # Fallback to WebSocket (for scheduler or legacy connections)
         if not delivered:
-            logger.info("Agent %s not connected, message %s stored for polling",
+            delivered = await _push_to_agent(to_agent, msg)
+        if not delivered:
+            logger.info("Agent %s not reachable, message %s stored for polling",
                         to_agent, msg["msg_id"])
     else:
         count = await _broadcast(msg)
