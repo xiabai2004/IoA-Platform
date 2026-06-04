@@ -65,6 +65,10 @@ DEFAULT_CONFIG = {
     "auth": {
         "mode": "token",
     },
+    "bus": {
+        "backend": "memory",
+        "nats_servers": "nats://nats:4222",
+    },
     "cors": {
         "allowed_origins": [
             "http://localhost:8000",
@@ -158,6 +162,11 @@ def load_config(config_path: str = "config.yaml") -> dict:
 
     # 3. 解析配置中的环境变量引用
     config = _apply_env_vars(config)
+
+    # Bus defaults
+    config.setdefault("bus", {})
+    config["bus"].setdefault("backend", os.environ.get("IOA_BUS_BACKEND", "memory"))
+    config["bus"].setdefault("nats_servers", os.environ.get("NATS_SERVERS", "nats://nats:4222"))
 
     # 4. 验证必需的敏感配置
     _validate_config(config)
