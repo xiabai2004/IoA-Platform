@@ -25,7 +25,7 @@ SYMPTOM_RULES = [
         "fault_type": "device_failure",
         "confidence": 0.90,
         "description": "完全丢包，疑似链路中断或设备离线",
-        "repair_action": "clear_fault",
+        "repair_action": "link_failover",
     },
     {
         "name": "ddos_attack",
@@ -37,7 +37,7 @@ SYMPTOM_RULES = [
         "fault_type": "ddos",
         "confidence": 0.85,
         "description": "带宽利用率接近100%，疑似DDoS攻击",
-        "repair_action": "clear_fault",
+        "repair_action": "acl_deploy",
     },
     {
         "name": "link_congestion",
@@ -51,7 +51,7 @@ SYMPTOM_RULES = [
         "fault_type": "link_congestion",
         "confidence": 0.80,
         "description": "延迟显著升高但未完全中断，疑似链路拥塞",
-        "repair_action": "clear_fault",
+        "repair_action": "traffic_shape",
     },
     {
         "name": "cpu_overload",
@@ -62,7 +62,7 @@ SYMPTOM_RULES = [
         "fault_type": "cpu_overload",
         "confidence": 0.70,
         "description": "延迟中度升高，疑似路由器CPU过载",
-        "repair_action": "clear_fault",
+        "repair_action": "restart_service",
     },
     {
         "name": "misconfig",
@@ -73,7 +73,7 @@ SYMPTOM_RULES = [
         "fault_type": "misconfig",
         "confidence": 0.75,
         "description": "中度丢包，疑似路由配置错误",
-        "repair_action": "clear_fault",
+        "repair_action": "restart_service",
     },
 ]
 

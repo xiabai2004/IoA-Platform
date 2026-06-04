@@ -72,7 +72,7 @@ class HttpToolClient(ToolClient):
             TOOL_CLEAR_FAULT:     lambda p: ("POST", f"/simulator/fault/clear?fault_id={p['fault_id']}"),
             TOOL_CLEAR_ALL_FAULTS: lambda p: ("GET", "/simulator/fault/clear_all"),
             TOOL_LIST_FAULTS:     lambda p: ("GET", "/simulator/faults"),
-            TOOL_EXECUTE_REPAIR:  lambda p: ("GET", "/simulator/fault/clear_all"),
+            TOOL_EXECUTE_REPAIR:  lambda p: ("POST", "/simulator/repair"),
         }
 
         if name not in _ROUTES:
