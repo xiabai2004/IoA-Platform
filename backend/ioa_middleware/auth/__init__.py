@@ -47,6 +47,11 @@ def _load_psk() -> str:
 
 _PRE_SHARED_KEY = _load_psk()
 
+# 是否启用认证（开发模式可关闭，但生产强制开启）
+_AUTH_ENABLED = os.environ.get("IOA_AUTH_ENABLED", "true").lower() != "false"
+if os.environ.get("IOA_ENV") == "production" and not _AUTH_ENABLED:
+    raise RuntimeError("IOA_AUTH_ENABLED cannot be false in production mode")
+
 # 无需认证的开放路径前缀
 _OPEN_PREFIXES = (
     "/docs",
@@ -94,6 +99,11 @@ class TokenAuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        # 认证已关闭 → 全部放行
+        if not _AUTH_ENABLED:
+            await self.app(scope, receive, send)
+            return
+
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return

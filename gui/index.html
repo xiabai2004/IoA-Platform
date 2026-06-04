@@ -289,16 +289,28 @@ const SIM=API.replace(/:\d+$/,'') + ':8001' || 'http://127.0.0.1:8001';
 const AUTH_TOKEN = localStorage.getItem('ioa_auth_token') || '';
 const AUTH = AUTH_TOKEN ? {'Authorization': 'Bearer ' + AUTH_TOKEN} : {};
 
-// If no token set, prompt user (shown once)
-if (!AUTH_TOKEN) {
-    setTimeout(function() {
-        var token = prompt('Enter IoA Platform Auth Token (set via IOA_PSK):');
-        if (token) {
-            localStorage.setItem('ioa_auth_token', token);
-            location.reload();
-        }
-    }, 500);
+// Prompt for PSK only when auth is not disabled (check via health endpoint)
+// Auth state is checked asynchronously — if server rejects with 401, re-prompt
+let _authWarned = false;
+async function ensureAuth(){
+  if (AUTH_TOKEN) return true;
+  // Fire a quick request — if it 401s, auth is required
+  try{
+    const r = await fetch(API + '/health');
+    if (r.ok) return true; // server doesn't require auth
+  }catch(e){}
+  // 401 or unreachable — prompt for token
+  if (_authWarned) return false;
+  _authWarned = true;
+  const token = prompt('IoA Platform Auth Token (set via IOA_PSK):\n(Leave blank to skip if auth is disabled)');
+  if (token){
+    localStorage.setItem('ioa_auth_token', token);
+    location.reload();
+  }
+  return false;
 }
+// Run auth check on first load
+setTimeout(ensureAuth, 300);
 const DOMAINS=['east-china','north-china','south-china','west-china'];
 const DOMAIN_CN={'east-china':'华东','north-china':'华北','south-china':'华南','west-china':'西南'};
 const COLORS={'east-china':'#3b82f6','north-china':'#22c55e','south-china':'#f59e0b','west-china':'#a855f7'};

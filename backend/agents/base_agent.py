@@ -62,8 +62,6 @@ class BaseAgent(ABC):
         await self.bus.subscribe(self._agent_topic, self._on_message)
         await self.bus.subscribe(self._domain_topic, self._on_message)
 
-        logger.info("Agent %s subscribed to %s and %s", self.agent_id, self._agent_topic, self._domain_topic)
-
         await self._register()
 
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())

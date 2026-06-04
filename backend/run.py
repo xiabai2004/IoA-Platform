@@ -12,6 +12,7 @@
 
 import asyncio
 import logging
+import os
 import sys
 import uvicorn
 
@@ -45,13 +46,17 @@ async def main():
     logger.info("  C4 B-EP1 智能体互联网创新攻关")
     logger.info("=" * 60)
 
-    # 安全检查
-    from ioa_middleware.auth import _get_psk_unsafe
-    try:
-        _get_psk_unsafe(config)
-        logger.info("✅ PSK validated successfully.")
-    except RuntimeError as e:
-        logger.warning("⚠️  PSK check failed: %s", e)
+    # 安全检查（认证已关闭时跳过）
+    auth_enabled = os.environ.get("IOA_AUTH_ENABLED", "true").lower() != "false"
+    if auth_enabled:
+        from ioa_middleware.auth import _get_psk_unsafe
+        try:
+            _get_psk_unsafe(config)
+            logger.info("✅ PSK validated successfully.")
+        except RuntimeError as e:
+            logger.warning("⚠️  PSK check failed: %s", e)
+    else:
+        logger.info("🔓 Auth disabled — IOA_AUTH_ENABLED=false")
 
     # 1. 启动模拟器（独立端口，仅本地访问）
     sim_cfg = uvicorn.Config(
