@@ -1,0 +1,22 @@
+# IoA Agent — generic agent container
+# The specific agent is selected via AGENT_NAME env var at runtime.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY backend/ .
+
+# Agent entrypoint script
+COPY scripts/agent_entrypoint.py /app/agent_entrypoint.py
+
+CMD ["python", "/app/agent_entrypoint.py"]

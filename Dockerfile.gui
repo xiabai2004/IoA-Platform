@@ -1,0 +1,24 @@
+# IoA GUI — Nginx serving static frontend
+FROM nginx:alpine
+
+COPY gui/index.html /usr/share/nginx/html/
+COPY gui/ /usr/share/nginx/html/
+
+# Custom nginx config for SPA-like routing
+RUN echo 'server { \
+    listen 80; \
+    server_name localhost; \
+    location / { \
+        root /usr/share/nginx/html; \
+        index index.html; \
+        try_files $uri $uri/ /index.html; \
+    } \
+    location /health { \
+        return 200 "ok"; \
+    } \
+}' > /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+
+HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
+    CMD wget -qO- http://localhost/health || exit 1
