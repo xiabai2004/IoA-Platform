@@ -322,6 +322,53 @@ async def get_message(msg_id: str):
     return row
 
 
+# ── Bandit 在线学习统计端点 ─────────────────────────────
+
+@router.get("/bandit/stats")
+async def get_bandit_stats():
+    """获取 UCB1 多臂老虎机的在线学习统计数据。
+
+    用于可视化路由权重的收敛过程。
+    答辩时可展示：初始经验权重 → MAB 收敛后的数据驱动权重。
+
+    ### 返回格式
+    ```json
+    {
+      "agents": {
+        "monitor-east-china": {
+          "n": 12, "successes": 9, "failures": 3,
+          "mean_reward": 0.75, "ucb_score": 0.82
+        }
+      },
+      "total_trials": 30,
+      "c": 2.0,
+      "blend_alpha": 0.15
+    }
+    ```
+    """
+    from ioa_middleware.router.bandit_router import get_bandit
+    return get_bandit().export_stats()
+
+
+@router.get("/bandit/convergence")
+async def get_bandit_convergence():
+    """获取收敛曲线数据（答辩用）。
+
+    返回每个 Agent 的 (trials, mean_reward) 序列，
+    可绘制折线图展示 MAB 收敛过程。
+    """
+    from ioa_middleware.router.bandit_router import get_bandit
+    return {"convergence": get_bandit().convergence_curve()}
+
+
+@router.post("/bandit/reset")
+async def reset_bandit():
+    """重置 MAB 统计数据（调试/演示用）。"""
+    from ioa_middleware.router.bandit_router import get_bandit
+    get_bandit().reset()
+    return {"status": "ok", "message": "Bandit statistics reset"}
+
+
 # ── WebSocket 端点 ────────────────────────────────────────
 
 @router.websocket("/ws")

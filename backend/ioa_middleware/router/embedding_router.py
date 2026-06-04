@@ -166,7 +166,7 @@ class EmbeddingRouter:
         domain: Optional[str],
         task_embedding: Optional[np.ndarray],
     ) -> float:
-        """综合评分"""
+        """综合评分（含 UCB1 在线学习融合）"""
         score = 0.0
 
         # 1. 能力语义相似度 (0-0.4)
@@ -207,7 +207,9 @@ class EmbeddingRouter:
                 sim = self._cosine_similarity(task_embedding, agent_embedding)
                 score += 0.1 * sim
 
-        return score
+        # Blend with UCB1 bandit online learning
+        from ioa_middleware.router.bandit_router import get_bandit
+        return get_bandit().blend(score, agent.get("agent_id", ""))
 
     def _capability_matches(self, agent: dict, capability: str) -> bool:
         """检查 Agent 是否包含目标能力标签"""

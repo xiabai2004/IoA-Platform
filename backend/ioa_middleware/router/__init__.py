@@ -106,6 +106,7 @@ __all__ = [
     "SmartRouter",      # 智能路由器
     "WeightedRouter",   # 多维加权路由（LLM 增强）
     "EmbeddingRouter",  # Embedding 语义路由
+    "BanditScorer",     # UCB1 多臂老虎机（在线学习路由权重）
 ]
 
 

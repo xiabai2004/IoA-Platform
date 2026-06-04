@@ -157,12 +157,14 @@ class WeightedRouter:
     # ── 同步评分（不含语义）────────────────────────────────
 
     def _score_sync(self, agent: dict, capability: str, domain: str | None) -> float:
-        """同步部分：能力 + 域 + 负载，总分 0~0.9。"""
+        """同步部分：能力 + 域 + 负载 + UCB 探索，总分 0~0.9+。"""
         score = 0.0
         score += self._capability_score(agent, capability)  # 0~0.2
         score += self._domain_score(agent, domain)           # 0~0.3
         score += self._load_score(agent)                     # 0~0.4
-        return score
+        # Blend with UCB1 bandit online learning
+        from ioa_middleware.router.bandit_router import get_bandit
+        return get_bandit().blend(score, agent.get("agent_id", ""))
 
     # ── LLM 批量语义评分 ──────────────────────────────────
 

@@ -434,9 +434,17 @@ class DagScheduler:
                 detail={"dag_id": dag_id, "node_id": node_id, "output": output},
                 correlation_id=msg.get("correlation_id"),
             )
+            # Bandit feedback: successful execution → reward 1.0
+            from ioa_middleware.router.bandit_router import get_bandit
+            if node.assigned_agent:
+                get_bandit().record(node.assigned_agent, reward=1.0)
             logger.info("Node %s/%s completed by %s", dag_id, node_id, msg.get("from_agent"))
         elif result.get("output", {}).get("retry_signal"):
             # 验证节点返回 retry → 重置上游 diagnose+repair 节点
+            # Bandit feedback: retry = partial success → reward 0.5
+            from ioa_middleware.router.bandit_router import get_bandit
+            if node.assigned_agent:
+                get_bandit().record(node.assigned_agent, reward=0.5)
             await self._handle_verify_retry(state, node, result, msg)
         else:
             error = result.get("error", "Unknown error")
@@ -505,6 +513,10 @@ class DagScheduler:
                         "error": error, "retries_exhausted": True},
                 correlation_id=msg.get("correlation_id"),
             )
+            # Bandit feedback: failure → reward 0.0
+            from ioa_middleware.router.bandit_router import get_bandit
+            if node.assigned_agent:
+                get_bandit().record(node.assigned_agent, reward=0.0)
             logger.warning("Node %s/%s failed after %d retries: %s",
                            state.dag_id, node.node_id, node.max_retries, error)
 
