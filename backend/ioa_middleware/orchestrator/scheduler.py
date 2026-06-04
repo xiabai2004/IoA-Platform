@@ -82,8 +82,9 @@ class DagScheduler:
         asyncio.create_task(self._ws_listen())
         asyncio.create_task(self._schedule_loop())
         # Subscribe to bus for agent results (agents return results via bus)
+        # ORCHESTRATOR_AGENT_ID is "orchestrator" — matches from_agent in dispatches
         if self._bus is not None:
-            await self._bus.subscribe("agent.orchestrator-agent", self._on_bus_result)
+            await self._bus.subscribe(f"agent.{ORCHESTRATOR_AGENT_ID}", self._on_bus_result)
         logger.info("DagScheduler started")
 
     async def stop(self) -> None:
