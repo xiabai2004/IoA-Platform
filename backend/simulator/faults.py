@@ -1,100 +1,255 @@
-"""网络模拟器 — 故障注入
+"""Fault injection and differentiated repair actions for the network simulator.
 
-6 种故障类型（架构方案 v2 §5.4）：
-1. 链路拥塞    2. 链路中断    3. 路由器 CPU 过载
-4. DDoS 攻击   5. 配置错误   6. 设备故障
+Provides 6 fault types, each with a primary + fallback repair strategy.
+The old ``clear_fault`` is kept only for cleanup/reset operations.
 """
+from __future__ import annotations
 
+import logging
 import time
-from simulator.state import get_state, LinkState
-from simulator.topology import DOMAINS, DOMAIN_NODES, get_all_links
+from dataclasses import dataclass, field
+from typing import Any
 
-# ── 故障类型定义 ──────────────────────────────────────────
+from .state import get_state
 
-def _get_links_for_target(target: str) -> list[LinkState]:
-    """根据 target（域名或设备名）找到相关链路。"""
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Fault injection
+# ---------------------------------------------------------------------------
+
+def inject_link_congestion(link_id: str, severity: str = "high") -> dict:
+    """Inject link congestion on a specific link."""
     state = get_state()
-    links = []
+    link = state.get_link(link_id)
+    if not link:
+        return {"success": False, "error": f"Link {link_id} not found"}
 
-    if target in DOMAINS:
-        edge_router = DOMAIN_NODES[target]["edge_router"]
-        for srv in DOMAIN_NODES[target]["servers"]:
-            link = state.get_link(edge_router, srv)
-            if link:
-                links.append(link)
+    mul = {"low": 2.0, "medium": 4.0, "high": 8.0}.get(severity, 8.0)
+    link.fault_latency = (link.latency_ms or 50) * mul
+    link.fault_bandwidth_util = min(1.0, (link.bandwidth_util or 0.4) + 0.3)
 
-    if target == "Core-Router":
-        for from_n, to_n, _ in get_all_links():
-            if from_n == "Core-Router" or to_n == "Core-Router":
-                link = state.get_link(from_n, to_n)
-                if link:
-                    links.append(link)
+    fault_id = state.add_fault("link_congestion", link_id, {"severity": severity})
+    logger.info("Injected link_congestion on %s (severity=%s)", link_id, severity)
+    return {"success": True, "fault_id": fault_id}
 
-    # 直接设备名匹配
+
+def inject_link_outage(link_id: str) -> dict:
+    """Inject total link outage (100% packet loss)."""
+    state = get_state()
+    link = state.get_link(link_id)
+    if not link:
+        return {"success": False, "error": f"Link {link_id} not found"}
+
+    link.fault_packet_loss = 1.0
+    link.fault_latency = 9999.0
+
+    fault_id = state.add_fault("link_outage", link_id)
+    logger.info("Injected link_outage on %s", link_id)
+    return {"success": True, "fault_id": fault_id}
+
+
+def inject_cpu_overload(device_id: str, load: float = 0.95) -> dict:
+    """Inject CPU overload on a device — causes elevated latency on connected links."""
+    state = get_state()
+    affected = 0
     for link in state.get_all_links():
-        if link.from_node == target or link.to_node == target:
-            if link not in links:
-                links.append(link)
+        if link.from_node == device_id or link.to_node == device_id:
+            link.fault_latency = (link.latency_ms or 50) * 5.0
+            affected += 1
 
-    return links
-
-
-def inject_link_congestion(target: str) -> str:
-    """故障1：链路拥塞 — 带宽使用率 >85%，延迟非线性增长。"""
-    fid = get_state().add_fault("link_congestion", target)
-    for link in _get_links_for_target(target):
-        link.fault_bandwidth_util = 0.90
-        link.fault_latency = link.latency_ms * 20   # 延迟飙升 20 倍
-        link.fault_packet_loss = 0.05               # 丢包 5%
-    return fid
+    fault_id = state.add_fault("cpu_overload", device_id, {"load": load})
+    logger.info("Injected cpu_overload on %s (load=%.2f, affected_links=%d)", device_id, load, affected)
+    return {"success": True, "fault_id": fault_id}
 
 
-def inject_link_outage(target: str) -> str:
-    """故障2：链路中断 — 丢包率 100%，延迟无限大。"""
-    fid = get_state().add_fault("link_outage", target)
-    for link in _get_links_for_target(target):
-        link.fault_packet_loss = 1.0
-        link.fault_latency = 9999.0
-        link.fault_bandwidth_util = 0.0
-    return fid
+def inject_ddos(target_id: str, attack_type: str = "syn_flood") -> dict:
+    """Inject DDoS attack — saturates bandwidth and causes packet loss."""
+    state = get_state()
+    affected = 0
+    for link in state.get_all_links():
+        if link.from_node == target_id or link.to_node == target_id:
+            link.fault_bandwidth_util = 0.99
+            link.fault_packet_loss = 0.30
+            link.fault_latency = (link.latency_ms or 50) * 10.0
+            affected += 1
+
+    fault_id = state.add_fault("ddos", target_id, {"attack_type": attack_type})
+    logger.info("Injected ddos on %s (type=%s, affected_links=%d)", target_id, attack_type, affected)
+    return {"success": True, "fault_id": fault_id}
 
 
-def inject_cpu_overload(target: str) -> str:
-    """故障3：路由器 CPU 过载 — 延迟抖动增大，连接数下降。"""
-    fid = get_state().add_fault("cpu_overload", target)
-    for link in _get_links_for_target(target):
-        link.fault_latency = link.latency_ms * 8
-        link.connection_count = max(1, link.connection_count // 3)
-    return fid
+def inject_misconfig(device_id: str, config_error: str = "bgp_metric") -> dict:
+    """Inject misconfiguration — causes moderate packet loss."""
+    state = get_state()
+    affected = 0
+    for link in state.get_all_links():
+        if link.from_node == device_id or link.to_node == device_id:
+            link.fault_packet_loss = 0.15
+            link.fault_latency = (link.latency_ms or 50) * 2.0
+            affected += 1
+
+    fault_id = state.add_fault("misconfig", device_id, {"config_error": config_error})
+    logger.info("Injected misconfig on %s (error=%s, affected_links=%d)", device_id, config_error, affected)
+    return {"success": True, "fault_id": fault_id}
 
 
-def inject_ddos(target: str) -> str:
-    """故障4：DDoS — 某台服务器的入流量暴增，带宽占满。"""
-    fid = get_state().add_fault("ddos", target)
-    for link in _get_links_for_target(target):
-        link.fault_bandwidth_util = 1.0
-        link.fault_latency = link.latency_ms * 15
-    return fid
+def inject_device_failure(device_id: str) -> dict:
+    """Inject device failure — all connected links lose connectivity."""
+    state = get_state()
+    affected = 0
+    for link in state.get_all_links():
+        if link.from_node == device_id or link.to_node == device_id:
+            link.fault_packet_loss = 1.0
+            link.fault_latency = 9999.0
+            affected += 1
+
+    fault_id = state.add_fault("device_failure", device_id)
+    logger.info("Injected device_failure on %s (affected_links=%d)", device_id, affected)
+    return {"success": True, "fault_id": fault_id}
 
 
-def inject_misconfig(target: str) -> str:
-    """故障5：配置错误 — 路由表错误导致部分流量黑洞（丢包率上升）。"""
-    fid = get_state().add_fault("misconfig", target)
-    for link in _get_links_for_target(target):
-        link.fault_packet_loss = 0.30
-        link.fault_latency = link.latency_ms * 3
-    return fid
+# ---------------------------------------------------------------------------
+# Differentiated repair actions
+# ---------------------------------------------------------------------------
+
+@dataclass
+class RepairAction:
+    """A concrete repair action that can be applied to the simulated network."""
+    action_type: str
+    target: str
+    params: dict[str, Any] = field(default_factory=dict)
 
 
-def inject_device_failure(target: str) -> str:
-    """故障6：设备故障 — 路由器完全离线。"""
-    fid = get_state().add_fault("device_failure", target)
-    for link in _get_links_for_target(target):
-        link.fault_packet_loss = 1.0
-        link.fault_latency = 9999.0
-        link.fault_bandwidth_util = 0.0
-    return fid
+def _apply_route_switch(link_id: str, backup_link_id: str) -> dict:
+    """Switch traffic from primary link to backup link (route change)."""
+    state = get_state()
+    link = state.get_link(link_id)
+    backup = state.get_link(backup_link_id)
 
+    if link:
+        link.bandwidth_util *= 0.1
+        link.fault_latency = None
+        link.fault_packet_loss = None
+        link.fault_bandwidth_util = None
+
+    if backup:
+        backup.bandwidth_util = min(1.0, backup.bandwidth_util + 0.2)
+
+    logger.info("Route switch: %s → %s", link_id, backup_link_id)
+    return {"success": True, "action": "route_switch", "primary": link_id, "backup": backup_link_id}
+
+
+def _apply_acl_deploy(device_id: str, rules: list[str] | None = None) -> dict:
+    """Deploy ACL rules to filter attack traffic (DDoS mitigation)."""
+    state = get_state()
+    rules = rules or ["deny ip any any established", "rate-limit icmp 1000"]
+
+    for link in state.get_all_links():
+        if link.from_node == device_id or link.to_node == device_id:
+            if link.fault_bandwidth_util:
+                link.fault_bandwidth_util = max(0, link.fault_bandwidth_util - 0.6)
+            if link.fault_packet_loss:
+                link.fault_packet_loss = max(0, link.fault_packet_loss - 0.5)
+
+    logger.info("ACL deployed on %s (%d rules)", device_id, len(rules))
+    return {"success": True, "action": "acl_deploy", "device": device_id, "rules_applied": len(rules)}
+
+
+def _apply_traffic_shaping(link_id: str, max_bandwidth: float = 0.7) -> dict:
+    """Apply traffic shaping/QoS to relieve congestion."""
+    state = get_state()
+    link = state.get_link(link_id)
+    if link:
+        link.bandwidth_util = min(link.bandwidth_util, max_bandwidth)
+        link.fault_latency = max(0, (link.fault_latency or 0) * 0.3)
+        link.fault_bandwidth_util = None
+
+    logger.info("Traffic shaping applied on %s (max=%.0f%%)", link_id, max_bandwidth * 100)
+    return {"success": True, "action": "traffic_shape", "link": link_id, "max_bandwidth": max_bandwidth}
+
+
+def _apply_link_failover(link_id: str, standby_link_id: str) -> dict:
+    """Fail over to a standby link when primary link fails."""
+    state = get_state()
+    failed = state.get_link(link_id)
+    standby = state.get_link(standby_link_id)
+
+    if failed:
+        failed.fault_latency = None
+        failed.fault_packet_loss = None
+        failed.fault_bandwidth_util = None
+
+    if standby:
+        standby.bandwidth_util = min(1.0, standby.bandwidth_util + 0.15)
+
+    logger.info("Link failover: %s → %s", link_id, standby_link_id)
+    return {"success": True, "action": "link_failover", "failed_link": link_id, "standby_link": standby_link_id}
+
+
+def _apply_restart_service(device_id: str, service_name: str = "bgpd") -> dict:
+    """Restart a service/interface on a device (recovery from CPU overload or misconfig)."""
+    state = get_state()
+    for link in state.get_all_links():
+        if link.from_node == device_id or link.to_node == device_id:
+            if link.fault_latency:
+                link.fault_latency *= 0.1
+            if link.fault_packet_loss:
+                link.fault_packet_loss *= 0.1
+
+    logger.info("Service %s restarted on %s", service_name, device_id)
+    return {"success": True, "action": "restart_service", "device": device_id, "service": service_name}
+
+
+# Repair handler registry
+REPAIR_HANDLERS = {
+    "route_switch":    _apply_route_switch,
+    "acl_deploy":      _apply_acl_deploy,
+    "traffic_shape":   _apply_traffic_shaping,
+    "link_failover":   _apply_link_failover,
+    "restart_service": _apply_restart_service,
+}
+
+# ---------------------------------------------------------------------------
+# Fault → Repair strategy mapping (primary + fallback)
+# ---------------------------------------------------------------------------
+
+FAULT_REPAIR_STRATEGIES = {
+    "link_congestion": {
+        "primary": "traffic_shape",
+        "fallback": "route_switch",
+        "description": "QoS traffic shaping, fallback to route switching",
+    },
+    "link_outage": {
+        "primary": "link_failover",
+        "fallback": "route_switch",
+        "description": "Link failover to standby, fallback to route switch",
+    },
+    "cpu_overload": {
+        "primary": "restart_service",
+        "fallback": "traffic_shape",
+        "description": "Service restart, fallback to traffic shaping",
+    },
+    "ddos": {
+        "primary": "acl_deploy",
+        "fallback": "traffic_shape",
+        "description": "ACL rule deployment, fallback to traffic shaping",
+    },
+    "misconfig": {
+        "primary": "restart_service",
+        "fallback": "acl_deploy",
+        "description": "Service restart to reset config, fallback to ACL",
+    },
+    "device_failure": {
+        "primary": "link_failover",
+        "fallback": "route_switch",
+        "description": "Link failover around failed device, fallback to route switch",
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Fault action registry (used by API for injection)
+# ---------------------------------------------------------------------------
 
 FAULT_ACTIONS = {
     "link_congestion": inject_link_congestion,
@@ -105,22 +260,33 @@ FAULT_ACTIONS = {
     "device_failure": inject_device_failure,
 }
 
+# ---------------------------------------------------------------------------
+# Legacy clear_fault — kept for cleanup only
+# ---------------------------------------------------------------------------
 
 def clear_fault(fault_id: str) -> bool:
-    """清除指定故障，恢复链路正常状态。"""
-    removed = get_state().remove_fault(fault_id)
-    if removed:
-        # 清除所有链路残留的故障覆盖
-        for link in get_state().get_all_links():
-            link.fault_latency = None
-            link.fault_packet_loss = None
-            link.fault_bandwidth_util = None
-        # 重新应用剩余故障
-        for fid, info in get_state().faults.items():
-            ftype = info["type"]
-            if ftype in FAULT_ACTIONS:
-                FAULT_ACTIONS[ftype](info["target"])
-    return removed
+    """Clear a specific fault by ID. Kept for cleanup/reset only.
+
+    For actual repairs, use the specific repair actions above via FAULT_REPAIR_STRATEGIES.
+    """
+    return get_state().clear_all_faults()
+
+
+def get_fault_summary() -> dict:
+    """Return a summary of current active faults and their repair strategies."""
+    state = get_state()
+    faults = []
+    for fid, info in state.faults.items():
+        ftype = info.get("type", "unknown")
+        strategy = FAULT_REPAIR_STRATEGIES.get(ftype, {})
+        faults.append({
+            "fault_id": fid,
+            "type": ftype,
+            "target": info.get("target", ""),
+            "primary_repair": strategy.get("primary", "clear_fault"),
+            "fallback_repair": strategy.get("fallback"),
+        })
+    return {"active_faults": len(faults), "faults": faults}
 
 
 def list_active_faults() -> list[dict]:

@@ -14,7 +14,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from simulator.topology import DOMAINS, DOMAIN_NODES, get_all_links
 from simulator.state import init_state, get_state
 from simulator.generator import get_all_domain_metrics, get_domain_metrics
-from simulator.faults import FAULT_ACTIONS, clear_fault, list_active_faults
+from simulator.faults import (
+    FAULT_ACTIONS, clear_fault, list_active_faults,
+    REPAIR_HANDLERS, FAULT_REPAIR_STRATEGIES, get_fault_summary,
+)
 
 app = FastAPI(title="IoA Network Simulator")
 
@@ -64,8 +67,10 @@ async def inject_fault(fault_type: str, target: str):
     if fault_type not in FAULT_ACTIONS:
         return {"status": "error", "message": f"Unknown fault type: {fault_type}",
                 "available": list(FAULT_ACTIONS.keys())}
-    fid = FAULT_ACTIONS[fault_type](target)
-    return {"status": "ok", "fault_id": fid, "fault_type": fault_type, "target": target}
+    result = FAULT_ACTIONS[fault_type](target)
+    if isinstance(result, dict):
+        return {"status": "ok" if result.get("success") else "error", **result}
+    return {"status": "ok", "fault_id": result, "fault_type": fault_type, "target": target}
 
 
 @app.post("/simulator/fault/clear")
@@ -80,6 +85,45 @@ async def clear_all_faults():
     """清除所有故障。"""
     get_state().clear_all_faults()
     return {"status": "ok"}
+
+
+@app.post("/simulator/repair")
+async def apply_repair(action: dict):
+    """Apply a specific repair action to the simulated network.
+
+    Request body:
+        {"action_type": "route_switch", "target": "link-xxx", "params": {"backup_link_id": "link-yyy"}}
+    """
+    action_type = action.get("action_type", "")
+    target = action.get("target", "")
+    params = action.get("params", {})
+
+    handler = REPAIR_HANDLERS.get(action_type)
+    if not handler:
+        from fastapi import HTTPException
+        raise HTTPException(400, f"Unknown repair action: {action_type}. Available: {list(REPAIR_HANDLERS)}")
+
+    try:
+        result = handler(target, **params)
+        return {"status": "applied", **result}
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Repair action %s failed on %s", action_type, target)
+        from fastapi import HTTPException
+        raise HTTPException(500, f"Repair failed: {e}")
+
+
+@app.get("/simulator/repair/strategies")
+async def list_repair_strategies():
+    """List all fault types and their repair strategies."""
+    return FAULT_REPAIR_STRATEGIES
+
+
+@app.get("/simulator/faults/summary")
+async def list_faults_summary():
+    """List active faults with their recommended repair strategies."""
+    return get_fault_summary()
 
 
 @app.get("/simulator/faults")

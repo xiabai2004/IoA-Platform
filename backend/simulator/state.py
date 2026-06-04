@@ -51,7 +51,10 @@ class SimulatorState:
             key = f"{from_n}->{to_n}"
             self.links[key] = LinkState(from_node=from_n, to_node=to_n, bandwidth_gbps=bw)
 
-    def get_link(self, from_node: str, to_node: str) -> LinkState | None:
+    def get_link(self, from_node: str, to_node: str | None = None) -> LinkState | None:
+        """Get a link by composite key "from->to" (one arg) or (from, to) pair."""
+        if to_node is None:
+            return self.links.get(from_node)
         return self.links.get(f"{from_node}->{to_node}")
 
     def get_all_links(self) -> list[LinkState]:
@@ -76,10 +79,28 @@ class SimulatorState:
             return True
         return False
 
-    def clear_all_faults(self) -> None:
-        """清除所有故障，恢复所有链路正常状态。"""
+    def clear_all_faults(self) -> bool:
+        """清除所有故障，恢复所有链路正常状态。返回是否有故障被清除。"""
+        had_faults = len(self.faults) > 0
         self.faults.clear()
         for link in self.links.values():
+            link.fault_latency = None
+            link.fault_packet_loss = None
+            link.fault_bandwidth_util = None
+        return had_faults
+
+    def clear_faults_by_type(self, fault_type: str) -> int:
+        """Clear all faults of a specific type. Returns count removed."""
+        removed = 0
+        for fid in list(self.faults.keys()):
+            if self.faults[fid].get("type") == fault_type:
+                self.remove_fault(fid)
+                removed += 1
+        return removed
+
+    def reset_all_links(self) -> None:
+        """Reset all link fault overlays to None."""
+        for link in self.get_all_links():
             link.fault_latency = None
             link.fault_packet_loss = None
             link.fault_bandwidth_util = None
