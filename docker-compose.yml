@@ -91,6 +91,7 @@ services:
       - AGENT_ID=monitor-east-china
       - AGENT_DOMAIN=east-china
       - AGENT_CAPABILITY=monitor
+      - IOA_PSK=${IOA_PSK}
       - NATS_SERVERS=nats://nats:4222
       - IOA_BUS_BACKEND=nats
     networks:
@@ -110,6 +111,7 @@ services:
       - AGENT_ID=monitor-north-china
       - AGENT_DOMAIN=north-china
       - AGENT_CAPABILITY=monitor
+      - IOA_PSK=${IOA_PSK}
       - NATS_SERVERS=nats://nats:4222
       - IOA_BUS_BACKEND=nats
     networks:
@@ -129,6 +131,7 @@ services:
       - AGENT_ID=monitor-south-china
       - AGENT_DOMAIN=south-china
       - AGENT_CAPABILITY=monitor
+      - IOA_PSK=${IOA_PSK}
       - NATS_SERVERS=nats://nats:4222
       - IOA_BUS_BACKEND=nats
     networks:
@@ -148,6 +151,7 @@ services:
       - AGENT_ID=monitor-west-china
       - AGENT_DOMAIN=west-china
       - AGENT_CAPABILITY=monitor
+      - IOA_PSK=${IOA_PSK}
       - NATS_SERVERS=nats://nats:4222
       - IOA_BUS_BACKEND=nats
     networks:
@@ -167,6 +171,7 @@ services:
       - AGENT_ID=diagnoser-global
       - AGENT_DOMAIN=global
       - AGENT_CAPABILITY=diagnose
+      - IOA_PSK=${IOA_PSK}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - NATS_SERVERS=nats://nats:4222
       - IOA_BUS_BACKEND=nats
@@ -187,6 +192,7 @@ services:
       - AGENT_ID=repairer-global
       - AGENT_DOMAIN=global
       - AGENT_CAPABILITY=repair
+      - IOA_PSK=${IOA_PSK}
       - NATS_SERVERS=nats://nats:4222
       - IOA_BUS_BACKEND=nats
     networks:
@@ -206,6 +212,7 @@ services:
       - AGENT_ID=verifier-global
       - AGENT_DOMAIN=global
       - AGENT_CAPABILITY=verify
+      - IOA_PSK=${IOA_PSK}
       - NATS_SERVERS=nats://nats:4222
       - IOA_BUS_BACKEND=nats
     networks:
@@ -225,6 +232,7 @@ services:
       - AGENT_ID=reporter-global
       - AGENT_DOMAIN=global
       - AGENT_CAPABILITY=report
+      - IOA_PSK=${IOA_PSK}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - NATS_SERVERS=nats://nats:4222
       - IOA_BUS_BACKEND=nats
