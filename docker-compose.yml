@@ -1,0 +1,254 @@
+version: "3.9"
+
+services:
+  # ==================== Infrastructure ====================
+  nats:
+    image: nats:2.10-alpine
+    container_name: ioa-nats
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    networks:
+      - ioa-net
+    healthcheck:
+      test: ["CMD", "nats", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ==================== Simulator ====================
+  simulator:
+    build:
+      context: .
+      dockerfile: Dockerfile.simulator
+    container_name: ioa-simulator
+    environment:
+      - IOA_PSK=${IOA_PSK}
+      - NATS_SERVERS=nats://nats:4222
+    ports:
+      - "8001:8001"
+    networks:
+      - ioa-net
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ==================== Middleware ====================
+  middleware:
+    build:
+      context: .
+      dockerfile: Dockerfile.middleware
+    container_name: ioa-middleware
+    environment:
+      - IOA_PSK=${IOA_PSK}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - MIMO_API_KEY=${MIMO_API_KEY}
+      - NATS_SERVERS=nats://nats:4222
+      - IOA_BUS_BACKEND=nats
+    ports:
+      - "8000:8000"
+    networks:
+      - ioa-net
+    depends_on:
+      nats:
+        condition: service_healthy
+      simulator:
+        condition: service_started
+    restart: unless-stopped
+
+  # ==================== Agents ====================
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: ioa-orchestrator
+    environment:
+      - AGENT_NAME=orchestrator
+      - AGENT_ID=orchestrator-agent
+      - AGENT_DOMAIN=global
+      - AGENT_CAPABILITY=orchestrate
+      - IOA_PSK=${IOA_PSK}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - NATS_SERVERS=nats://nats:4222
+      - IOA_BUS_BACKEND=nats
+    networks:
+      - ioa-net
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  monitor-east-china:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: ioa-monitor-east-china
+    environment:
+      - AGENT_NAME=monitor
+      - AGENT_ID=monitor-east-china
+      - AGENT_DOMAIN=east-china
+      - AGENT_CAPABILITY=monitor
+      - NATS_SERVERS=nats://nats:4222
+      - IOA_BUS_BACKEND=nats
+    networks:
+      - ioa-net
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  monitor-north-china:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: ioa-monitor-north-china
+    environment:
+      - AGENT_NAME=monitor
+      - AGENT_ID=monitor-north-china
+      - AGENT_DOMAIN=north-china
+      - AGENT_CAPABILITY=monitor
+      - NATS_SERVERS=nats://nats:4222
+      - IOA_BUS_BACKEND=nats
+    networks:
+      - ioa-net
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  monitor-south-china:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: ioa-monitor-south-china
+    environment:
+      - AGENT_NAME=monitor
+      - AGENT_ID=monitor-south-china
+      - AGENT_DOMAIN=south-china
+      - AGENT_CAPABILITY=monitor
+      - NATS_SERVERS=nats://nats:4222
+      - IOA_BUS_BACKEND=nats
+    networks:
+      - ioa-net
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  monitor-west-china:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: ioa-monitor-west-china
+    environment:
+      - AGENT_NAME=monitor
+      - AGENT_ID=monitor-west-china
+      - AGENT_DOMAIN=west-china
+      - AGENT_CAPABILITY=monitor
+      - NATS_SERVERS=nats://nats:4222
+      - IOA_BUS_BACKEND=nats
+    networks:
+      - ioa-net
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  diagnoser:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: ioa-diagnoser
+    environment:
+      - AGENT_NAME=diagnoser
+      - AGENT_ID=diagnoser-global
+      - AGENT_DOMAIN=global
+      - AGENT_CAPABILITY=diagnose
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - NATS_SERVERS=nats://nats:4222
+      - IOA_BUS_BACKEND=nats
+    networks:
+      - ioa-net
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  repairer:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: ioa-repairer
+    environment:
+      - AGENT_NAME=repairer
+      - AGENT_ID=repairer-global
+      - AGENT_DOMAIN=global
+      - AGENT_CAPABILITY=repair
+      - NATS_SERVERS=nats://nats:4222
+      - IOA_BUS_BACKEND=nats
+    networks:
+      - ioa-net
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  verifier:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: ioa-verifier
+    environment:
+      - AGENT_NAME=verifier
+      - AGENT_ID=verifier-global
+      - AGENT_DOMAIN=global
+      - AGENT_CAPABILITY=verify
+      - NATS_SERVERS=nats://nats:4222
+      - IOA_BUS_BACKEND=nats
+    networks:
+      - ioa-net
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  reporter:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: ioa-reporter
+    environment:
+      - AGENT_NAME=reporter
+      - AGENT_ID=reporter-global
+      - AGENT_DOMAIN=global
+      - AGENT_CAPABILITY=report
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - NATS_SERVERS=nats://nats:4222
+      - IOA_BUS_BACKEND=nats
+    networks:
+      - ioa-net
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ==================== GUI ====================
+  gui:
+    build:
+      context: .
+      dockerfile: Dockerfile.gui
+    container_name: ioa-gui
+    ports:
+      - "3000:80"
+    networks:
+      - ioa-net
+    depends_on:
+      - middleware
+    restart: unless-stopped
+
+networks:
+  ioa-net:
+    driver: bridge
