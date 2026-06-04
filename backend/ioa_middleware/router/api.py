@@ -27,7 +27,7 @@ import asyncio
 import json
 import time
 import logging
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Request
 from ioa_middleware.db import execute, fetch_all, fetch_one
 
 logger = logging.getLogger("router")
@@ -164,7 +164,7 @@ async def _broadcast(msg: dict) -> int:
         422: {"description": "消息格式错误"},
     },
 )
-async def post_message(msg: dict):
+async def post_message(msg: dict, request: Request):
     """接收 IoAP 消息。"""
     # 确保 ts_ms 存在
     if "ts_ms" not in msg:
@@ -180,8 +180,17 @@ async def post_message(msg: dict):
 
     # 路由
     to_agent = msg.get("to_agent")
+    delivered = False
     if to_agent:
         delivered = await _push_to_agent(to_agent, msg)
+        # Also publish to message bus (agents listen on bus topics)
+        bus = getattr(request.app.state, "bus", None)
+        if bus is not None:
+            try:
+                await bus.publish(f"agent.{to_agent}", msg)
+                delivered = True
+            except Exception:
+                pass
         if not delivered:
             logger.info("Agent %s not connected, message %s stored for polling",
                         to_agent, msg["msg_id"])
@@ -192,7 +201,7 @@ async def post_message(msg: dict):
     return {
         "status": "ok",
         "msg_id": msg["msg_id"],
-        "routed": bool(to_agent),
+        "routed": delivered,
     }
 
 

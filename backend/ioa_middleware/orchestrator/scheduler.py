@@ -77,10 +77,13 @@ class DagScheduler:
     # ── 公开 API ──────────────────────────────────────────
 
     async def start(self) -> None:
-        """启动调度器：连接 WebSocket + 启动后台循环。"""
+        """启动调度器：连接 WebSocket + 订阅 bus + 启动后台循环。"""
         self._running = True
         asyncio.create_task(self._ws_listen())
         asyncio.create_task(self._schedule_loop())
+        # Subscribe to bus for agent results (agents return results via bus)
+        if self._bus is not None:
+            await self._bus.subscribe("agent.orchestrator-agent", self._on_bus_result)
         logger.info("DagScheduler started")
 
     async def stop(self) -> None:
@@ -398,6 +401,23 @@ class DagScheduler:
         )
 
     # ── 结果处理 ──────────────────────────────────────────
+
+    async def _on_bus_result(self, topic: str, msg: dict) -> None:
+        """Receive agent results from the message bus."""
+        payload = msg.get("payload", {})
+        result = payload.get("result", {})
+        dag_id = result.get("dag_id", "")
+        node_id = result.get("node_id", "")
+        if dag_id and node_id:
+            await self._handle_result({
+                "payload": {
+                    "dag_id": dag_id,
+                    "node_id": node_id,
+                    "result": result,
+                },
+                "from_agent": msg.get("from_agent", ""),
+                "correlation_id": msg.get("correlation_id", ""),
+            })
 
     async def _handle_result(self, msg: dict) -> None:
         """处理 Agent 返回的节点执行结果。"""

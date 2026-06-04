@@ -101,6 +101,7 @@ class BaseAgent(ABC):
     async def _on_message(self, topic: str, message: dict[str, Any]) -> None:
         """Internal callback: route incoming message to handle_message."""
         reply_topic = message.get("_reply_to")
+        from_agent = message.get("from_agent", "")
         try:
             result = await self.handle_message(topic, message)
         except Exception:
@@ -109,8 +110,24 @@ class BaseAgent(ABC):
             )
             result = {"error": "internal_error", "agent": self.agent_id}
 
+        # Reply via bus: to _reply_to topic first, then to sender's agent topic
+        # Echo dag_id/node_id from the request so scheduler can correlate results
+        orig_payload = message.get("payload", {})
+        if isinstance(result, dict):
+            result.setdefault("dag_id", orig_payload.get("dag_id", ""))
+            result.setdefault("node_id", orig_payload.get("node_id", ""))
+        result_msg = {
+            "type": "result",
+            "from_agent": self.agent_id,
+            "to_agent": from_agent,
+            "payload": {"result": result} if isinstance(result, dict) else {"result": {"data": result}},
+            "correlation_id": message.get("correlation_id", ""),
+            "msg_id": message.get("msg_id", ""),
+        }
         if reply_topic:
-            await self.bus.publish(reply_topic, result)
+            await self.bus.publish(reply_topic, result_msg)
+        if from_agent:
+            await self.bus.publish(f"agent.{from_agent}", result_msg)
 
     async def _register(self) -> None:
         """Register this agent with the central registry."""
