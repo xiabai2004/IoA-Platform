@@ -34,8 +34,8 @@ class CapabilityProfile(BaseModel):
     domain: Domain = Field(..., description="所属域")
     capabilities: list[str] = Field(..., min_length=1, description="能力标签列表")
     protocols: list[str] = Field(
-        default=["ioap-v1", "mcp-v2024", "a2a-v1"],
-        description="支持的通信协议"
+        default=["ioap-v1"],
+        description="支持的通信协议（ioap-v1 运行时激活；mcp-v2024/a2a-v1 服务端就绪）"
     )
     model: str | None = Field(None, description="使用的 LLM 模型（可选）")
     load: float = Field(default=0.0, ge=0.0, le=1.0, description="当前负载（0-1）")

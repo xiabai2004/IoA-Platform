@@ -32,6 +32,8 @@ from ioa_middleware.orchestrator.models import (
 )
 from ioa_middleware.orchestrator import store
 from ioa_middleware.router import SmartRouter
+from exceptions import DagValidationError, SchedulerNotInitializedError
+from constants import TIMING, DIAG, CACHE
 
 logger = logging.getLogger("orchestrator.scheduler")
 
@@ -54,17 +56,20 @@ class DagScheduler:
     def __init__(self, bus: MessageBus, config: dict):
         self._bus = bus
         self._config = config
-        self._http = httpx.AsyncClient(timeout=30.0)
+        self._http = httpx.AsyncClient(timeout=TIMING.HTTP_CLIENT_TIMEOUT)
         self._ws: websockets.WebSocketClientProtocol | None = None
         self._running = False
         self._dags: dict[str, DagState] = {}  # 内存中的 DAG 状态缓存
         self._result_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+        self._broadcast_fn = None  # 仪表盘广播函数（延迟注入）
+        self._agent_load: dict[str, dict] = {}  # agent_id → {"count": int, "last_active_ms": int}
 
         # 中间件地址（连接用 localhost，非 bind 地址）
         port = config.get("middleware", {}).get("port", 8000)
         psk = config.get("auth", {}).get("pre_shared_key", "")
         self._middleware_base = f"http://127.0.0.1:{port}"
-        self._ws_url = f"ws://127.0.0.1:{port}/messages/ws?agent_id={ORCHESTRATOR_AGENT_ID}&token={psk}"
+        self._ws_url = f"ws://127.0.0.1:{port}/messages/ws?agent_id={ORCHESTRATOR_AGENT_ID}"
+        self._ws_auth_headers = {"Authorization": f"Bearer {psk}"}
         self._auth_header = {"Authorization": f"Bearer {psk}"}
 
         # 语义路由引擎（SmartRouter 自动选择最佳可用引擎）
@@ -72,20 +77,67 @@ class DagScheduler:
 
         # 日志退避计数器：node_id → 连续无 Agent 次数
         self._no_agent_count: dict[str, int] = {}
-        self._no_agent_log_interval = 10  # 每 10 次才 log 一次
+        self._no_agent_log_interval = CACHE.NO_AGENT_LOG_INTERVAL
+
+    async def _notify_dashboard(self, event_type: str, data: dict) -> None:
+        """通知仪表盘 WebSocket 客户端"""
+        if self._broadcast_fn is None:
+            try:
+                from ioa_middleware.main import app
+                self._broadcast_fn = getattr(app.state, "broadcast_dashboard", None)
+            except (ImportError, AttributeError):
+                logger.debug("Dashboard broadcast function not yet available")
+        if self._broadcast_fn:
+            try:
+                import time as _time
+                await self._broadcast_fn({
+                    "type": event_type,
+                    "ts_ms": int(_time.time() * 1000),
+                    **data,
+                })
+            except (ConnectionError, RuntimeError) as exc:
+                logger.debug("Dashboard broadcast failed: %s", exc)
+                self._broadcast_fn = None  # reset to retry on next call
 
     # ── 公开 API ──────────────────────────────────────────
 
     async def start(self) -> None:
         """启动调度器：连接 WebSocket + 订阅 bus + 启动后台循环。"""
+        from async_utils import safe_task
         self._running = True
-        asyncio.create_task(self._ws_listen())
-        asyncio.create_task(self._schedule_loop())
+        # 启动时先清理遗留的僵尸 DAG
+        await self._cleanup_stale_dags_on_startup()
+        safe_task(self._ws_listen(), name="scheduler_ws_listen")
+        safe_task(self._schedule_loop(), name="scheduler_loop")
         # Subscribe to bus for agent results (agents return results via bus)
         # ORCHESTRATOR_AGENT_ID is "orchestrator" — matches from_agent in dispatches
         if self._bus is not None:
             await self._bus.subscribe(f"agent.{ORCHESTRATOR_AGENT_ID}", self._on_bus_result)
         logger.info("DagScheduler started")
+
+    async def _cleanup_stale_dags_on_startup(self) -> None:
+        """启动时清理遗留的僵尸 DAG（上次重启前遗留的 running 状态）。"""
+        from ioa_middleware.orchestrator import store as dag_store
+        try:
+            # 查询数据库中的 running DAG
+            rows = await dag_store.list_dags(status="running", limit=100)
+            now_ms = int(time.time() * 1000)
+            stale_count = 0
+            for row in rows:
+                dag_id = row.get("dag_id", "")
+                submitted = row.get("submitted_at_ms", 0) or 0
+                elapsed = now_ms - submitted
+                # 超过 5 分钟的 running DAG 视为僵尸
+                if elapsed > 300_000:
+                    await dag_store.update_dag_status(dag_id, DagStatus.failed,
+                                                      {"error": "标记为失败：服务重启后遗留的僵尸 DAG"})
+                    stale_count += 1
+                    logger.info("Startup cleanup: marked stale DAG %s as failed (elapsed %.0fs)",
+                                dag_id, elapsed / 1000)
+            if stale_count:
+                logger.info("Startup cleanup: %d stale DAGs marked as failed", stale_count)
+        except Exception:
+            logger.exception("Failed to cleanup stale DAGs on startup")
 
     async def stop(self) -> None:
         """停止调度器。"""
@@ -93,8 +145,10 @@ class DagScheduler:
         if self._ws:
             try:
                 await self._ws.close()
+            except (ConnectionError, OSError, websockets.ConnectionClosed):
+                pass  # Already disconnected
             except Exception:
-                pass
+                logger.warning("Unexpected error closing scheduler WS", exc_info=True)
         await self._http.aclose()
         logger.info("DagScheduler stopped")
 
@@ -105,16 +159,19 @@ class DagScheduler:
         # 校验：DAG 中不能有重复 node_id
         node_ids = [n.node_id for n in dag_def.nodes]
         if len(node_ids) != len(set(node_ids)):
-            raise ValueError(f"DAG {dag_id}: duplicate node_id in definition")
+            raise DagValidationError(f"DAG {dag_id}: duplicate node_id in definition", dag_id=dag_id)
 
         # 校验：depends_on 引用的节点必须存在
         for node in dag_def.nodes:
             for dep in node.depends_on:
                 if dep not in node_ids:
-                    raise ValueError(f"DAG {dag_id}: node {node.node_id} depends on unknown node {dep}")
+                    raise DagValidationError(
+                        f"DAG {dag_id}: node {node.node_id} depends on unknown node {dep}",
+                        dag_id=dag_id,
+                    )
 
         # 校验：无循环依赖（拓扑排序可行性检测）
-        self._topological_sort(dag_def.nodes)
+        self._topological_sort(dag_def.nodes, dag_id=dag_id)
 
         # 持久化
         await store.create_dag(dag_def)
@@ -174,7 +231,7 @@ class DagScheduler:
         """WebSocket 监听循环：连接消息总线，接收发给 orchestrator 的结果。"""
         while self._running:
             try:
-                async with websockets.connect(self._ws_url) as ws:
+                async with websockets.connect(self._ws_url, additional_headers=self._ws_auth_headers) as ws:
                     self._ws = ws
                     logger.info("Scheduler connected to message bus")
                     while self._running:
@@ -198,9 +255,14 @@ class DagScheduler:
     # ── 调度循环 ──────────────────────────────────────────
 
     async def _schedule_loop(self) -> None:
-        """主调度循环：处理结果 + 检查可调度节点。"""
+        """主调度循环：处理结果 + 检查可调度节点 + 清理僵尸 DAG。"""
+        stale_check_interval = 60  # 每 60 秒检查一次僵尸 DAG
+        last_stale_check = 0.0
+
         while self._running:
             try:
+                now = time.time()
+
                 # 1. 消费结果队列
                 while not self._result_queue.empty():
                     msg = await self._result_queue.get()
@@ -212,17 +274,25 @@ class DagScheduler:
                         await self._schedule_ready_nodes(state)
                         await self._check_dag_completion(state)
 
+                # 3. 每隔一段时间清理僵尸 DAG
+                if now - last_stale_check > stale_check_interval:
+                    await self._cleanup_stale_dags()
+                    last_stale_check = now
+
             except Exception:
-                logger.exception("Schedule iteration error")
+                logger.exception("Schedule iteration error, dumping DAG state snapshots")
+                for dag_id, state in self._dags.items():
+                    node_statuses = {nid: n.status.value for nid, n in state.nodes.items()}
+                    logger.debug("DAG %s state: status=%s nodes=%s", dag_id, state.status.value, node_statuses)
 
             await asyncio.sleep(SCHEDULE_INTERVAL_SEC)
 
     # ── 拓扑排序 ──────────────────────────────────────────
 
-    def _topological_sort(self, nodes: list[DagNodeDef]) -> list[DagNodeDef]:
+    def _topological_sort(self, nodes: list[DagNodeDef], dag_id: str = "") -> list[DagNodeDef]:
         """Kahn 算法拓扑排序。返回按依赖顺序排列的节点列表。
 
-        Raises ValueError if cycle detected.
+        Raises DagValidationError if cycle detected.
         """
         node_map = {n.node_id: n for n in nodes}
         in_degree = {n.node_id: len(n.depends_on) for n in nodes}
@@ -243,7 +313,7 @@ class DagScheduler:
                     queue.append(downstream)
 
         if len(result) != len(nodes):
-            raise ValueError("DAG contains a cycle")
+            raise DagValidationError("DAG contains a cycle", dag_id=dag_id)
         return result
 
     # ── DAG 启动 ──────────────────────────────────────────
@@ -259,6 +329,7 @@ class DagScheduler:
         await store.write_audit("dag.started", correlation_id=state.correlation_id,
                                 detail={"dag_id": dag_id})
         logger.info("DAG %s started", dag_id)
+        await self._notify_dashboard("dag_update", {"dag_id": dag_id, "status": "running"})
 
     # ── 节点调度 ──────────────────────────────────────────
 
@@ -384,6 +455,18 @@ class DagScheduler:
             resp.raise_for_status()
             logger.info("Dispatched node %s → agent %s", node.node_id, agent["agent_id"])
             self._no_agent_count.pop(node.node_id, None)  # 成功后重置退避计数
+            # 更新 Agent 负载（增加活跃任务计数）
+            agent_id = agent["agent_id"]
+            now_ms = int(time.time() * 1000)
+            entry = self._agent_load.get(agent_id, {"count": 0, "last_active_ms": now_ms})
+            entry["count"] += 1
+            entry["last_active_ms"] = now_ms
+            self._agent_load[agent_id] = entry
+            try:
+                from ioa_middleware.registry import store as registry_store
+                await registry_store.heartbeat(agent_id, load=min(1.0, entry["count"] / 5.0))
+            except Exception:
+                pass
         except Exception:
             logger.exception("Failed to dispatch node %s", node.node_id)
             node.status = NodeStatus.failed
@@ -441,6 +524,26 @@ class DagScheduler:
             logger.warning("Result for unknown node %s in DAG %s", node_id, dag_id)
             return
 
+        # 更新 Agent 负载（减少活跃任务计数 + 负载衰减）
+        if node.assigned_agent:
+            agent_id = node.assigned_agent
+            now_ms = int(time.time() * 1000)
+            entry = self._agent_load.get(agent_id, {"count": 0, "last_active_ms": now_ms})
+            entry["count"] = max(0, entry.get("count", 1) - 1)
+            entry["last_active_ms"] = now_ms
+            self._agent_load[agent_id] = entry
+            # 使用衰减负载：若有活跃任务用实时负载，否则用衰减值（过去30秒内显示10%）
+            if entry["count"] > 0:
+                display_load = min(1.0, entry["count"] / 5.0)
+            else:
+                elapsed = now_ms - entry["last_active_ms"]
+                display_load = 0.1 if elapsed < 30_000 else 0.0
+            try:
+                from ioa_middleware.registry import store as registry_store
+                await registry_store.heartbeat(agent_id, load=display_load)
+            except Exception:
+                pass
+
         success = result.get("success", result.get("status") == "ok")
         output = result.get("output", result)
 
@@ -460,6 +563,10 @@ class DagScheduler:
             if node.assigned_agent:
                 get_bandit().record(node.assigned_agent, reward=1.0)
             logger.info("Node %s/%s completed by %s", dag_id, node_id, msg.get("from_agent"))
+            await self._notify_dashboard("node_update", {
+                "dag_id": dag_id, "node_id": node_id,
+                "status": "completed", "assigned_agent": node.assigned_agent,
+            })
         elif result.get("output", {}).get("retry_signal"):
             # 验证节点返回 retry → 重置上游 diagnose+repair 节点
             # Bandit feedback: retry = partial success → reward 0.5
@@ -485,16 +592,16 @@ class DagScheduler:
         node.status = NodeStatus.pending
         node.retry_count = retry_count - 1
         await store.retry_node(state.dag_id, node.node_id)
+        node.params["verify_retry_count"] = retry_count  # 写入 params 供下次 dispatch 传递
         node.output = {"verify_retry_count": retry_count}
 
-        # 重置 diagnose 和 repair 节点
-        for nid_suffix in retry_nodes:
-            for nid, n in state.nodes.items():
-                if nid_suffix in nid.lower() and n.status == NodeStatus.completed:
-                    n.status = NodeStatus.pending
-                    n.retry_count += 1
-                    await store.retry_node(state.dag_id, nid)
-                    logger.info("  Reset node %s for retry", nid)
+        # 重置 diagnose 和 repair 节点（按 node_type 精确匹配，避免字符串子串误判）
+        for nid, n in state.nodes.items():
+            if n.node_type in ("diagnose", "repair") and n.status == NodeStatus.completed:
+                n.status = NodeStatus.pending
+                n.retry_count += 1
+                await store.retry_node(state.dag_id, nid)
+                logger.info("  Reset node %s (type=%s) for retry", nid, n.node_type)
 
         await store.write_audit(
             "verify.retry",
@@ -560,6 +667,7 @@ class DagScheduler:
                 correlation_id=state.correlation_id,
             )
             logger.warning("DAG %s failed: %s", state.dag_id, [n.node_id for n in failed])
+            await self._notify_dashboard("dag_update", {"dag_id": state.dag_id, "status": "failed"})
             return
 
         # 全部完成 → DAG 完成
@@ -577,6 +685,48 @@ class DagScheduler:
                 correlation_id=state.correlation_id,
             )
             logger.info("DAG %s completed (%d nodes)", state.dag_id, len(nodes))
+            await self._notify_dashboard("dag_update", {"dag_id": state.dag_id, "status": "completed"})
+
+    # ── 僵尸 DAG 清理 ──────────────────────────────────────
+
+    # 单个 DAG 最大运行时间（秒）：基础 5 分钟，每多一次重试额外加 2 分钟
+    STALE_DAG_BASE_TIMEOUT = 300   # 5 分钟
+    STALE_DAG_PER_RETRY = 120      # 每次重试额外 2 分钟
+
+    async def _cleanup_stale_dags(self) -> None:
+        """清理超时僵尸 DAG：running 超过阈值的 DAG 标记为 failed。"""
+        now_ms = int(time.time() * 1000)
+        for dag_id, state in list(self._dags.items()):
+            if state.status != DagStatus.running:
+                continue
+
+            # 计算最大允许运行时间
+            max_retry = max(
+                (n.max_retries for n in state.nodes.values()), default=2
+            )
+            max_timeout_ms = (
+                (self.STALE_DAG_BASE_TIMEOUT + max_retry * self.STALE_DAG_PER_RETRY) * 1000
+            )
+
+            elapsed = now_ms - (state.submitted_at_ms or now_ms)
+            if elapsed > max_timeout_ms:
+                logger.warning(
+                    "DAG %s is stale (running for %.0fs > %ds), marking as failed",
+                    dag_id, elapsed / 1000, max_timeout_ms / 1000,
+                )
+                state.status = DagStatus.failed
+                state.finished_at_ms = now_ms
+                state.result = {"error": f"DAG timed out after {elapsed/1000:.0f}s (stale)"}
+                await store.update_dag_status(dag_id, DagStatus.failed, state.result)
+                await store.write_audit(
+                    "dag.stale_timeout",
+                    detail={"dag_id": dag_id, "elapsed_ms": elapsed, "max_timeout_ms": max_timeout_ms},
+                    correlation_id=state.correlation_id,
+                )
+                await self._notify_dashboard("dag_update", {
+                    "dag_id": dag_id, "status": "failed",
+                    "reason": "stale_timeout",
+                })
 
 
 # ── 全局单例 ──────────────────────────────────────────────
@@ -588,7 +738,7 @@ def get_scheduler() -> DagScheduler:
     """获取调度器单例。"""
     global _scheduler
     if _scheduler is None:
-        raise RuntimeError("DagScheduler not initialized. Call init_scheduler() first.")
+        raise SchedulerNotInitializedError()
     return _scheduler
 
 

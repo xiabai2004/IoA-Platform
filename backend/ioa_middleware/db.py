@@ -145,8 +145,8 @@ async def init_db(db_path: str = "data/ioa.db") -> aiosqlite.Connection:
 
     try:
         await _conn.execute("PRAGMA busy_timeout=5000")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("busy_timeout PRAGMA not supported: %s", exc)
 
     # 确保 commit 后再建表
     await _conn.commit()

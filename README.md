@@ -68,10 +68,11 @@
 实时指标兜底逻辑防止无限重试，确保系统稳定性。
 
 ### 5. 多协议桥接
-同时支持三种协议，实现互操作性：
-- **IoAP**（内部协议）：Agent间通信
-- **A2A**（Google标准）：外部Agent互操作
-- **MCP**（Model Context Protocol）：工具调用
+
+以自研 IoAP 为核心，兼容业界标准协议：
+- **IoAP**（生产协议）：Agent 间通信，多维加权路由 + DAG 编排
+- **A2A**（服务端就绪）：REST 端点已挂载（`/a2a`），Agent Card 可发现
+- **MCP**（部分集成）：SSE 服务端已挂载（`/mcp`），MonitorAgent ×4 通过 AutoToolClient 优先使用
 
 ---
 

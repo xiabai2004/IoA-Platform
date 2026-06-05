@@ -54,14 +54,18 @@
 
 ### 2.2 协议兼容性矩阵
 
-| Agent | IoAP | MCP | A2A |
-|-------|------|-----|-----|
-| orchestrator | ✅ v1.0 | ✅ v2024 | ✅ v1.0 |
-| monitor | ✅ v1.0 | ✅ v2024 | ✅ v1.0 |
-| diagnoser | ✅ v1.0 | ✅ v2024 | ✅ v1.0 |
-| repairer | ✅ v1.0 | ✅ v2024 | ✅ v1.0 |
-| verifier | ✅ v1.0 | ✅ v2024 | ✅ v1.0 |
-| reporter | ✅ v1.0 | ✅ v2024 | ✅ v1.0 |
+> **诚实声明**：IoAP 是所有 Agent 运行时通信的真实协议。MCP 服务端已挂载（SSE transport，`:8000/mcp`），MonitorAgent 已通过 AutoToolClient 优先使用 MCP。A2A 服务端已挂载（`:8000/a2a`），但目前为自引用桥接，外部 Agent 互操作待验证。
+
+| Agent | IoAP v1.0 | MCP v2024 | A2A v1.0 |
+|-------|:---------:|:---------:|:---------:|
+| orchestrator | ✅ 运行时 | ⚠️ — | ⚠️ 服务端就绪 |
+| monitor ×4 | ✅ 运行时 | ✅ AutoToolClient | ⚠️ 服务端就绪 |
+| diagnoser | ✅ 运行时 | ⚠️ HttpToolClient | ⚠️ 服务端就绪 |
+| repairer | ✅ 运行时 | ⚠️ HttpToolClient | ⚠️ 服务端就绪 |
+| verifier | ✅ 运行时 | ⚠️ HttpToolClient | ⚠️ 服务端就绪 |
+| reporter | ✅ 运行时 | ⚠️ HttpToolClient | ⚠️ 服务端就绪 |
+
+**图例**：✅ 生产可用 | ⚠️ 代码就绪但未验证/未默认启用
 
 ---
 

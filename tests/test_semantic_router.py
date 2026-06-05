@@ -109,8 +109,9 @@ class TestSyncScoring:
     def test_score_sync_integration(self):
         router = WeightedRouter()
         # monitor-east-china: cap=0.20 + domain(east-china)=0.30 + load(0.3)=0.28 = 0.78
+        # UCB1 blend (untried agent ucb=1.0): 0.85 * 0.78 + 0.15 * 1.0 = 0.813
         score = router._score_sync(SAMPLE_AGENTS[0], "monitor", "east-china")
-        assert score == pytest.approx(0.20 + 0.30 + 0.40 * 0.7)
+        assert score == pytest.approx(0.85 * 0.78 + 0.15 * 1.0)
 
 
 # ── 关键词降级测试 ────────────────────────────────────────

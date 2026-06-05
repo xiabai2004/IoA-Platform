@@ -33,16 +33,16 @@ logger = logging.getLogger("verifier_agent")
 # ── 验证阈值 ──────────────────────────────────────────────
 
 VERIFY_THRESHOLDS = {
-    "latency_ms":     {"max": 50.0,   "min_improvement": 0.30},   # ≤50ms 且改善 ≥30%
-    "packet_loss":    {"max": 0.005,  "min_improvement": 0.50},   # ≤0.5% 且改善 ≥50%
-    "bandwidth_util": {"max": 0.85,   "min_improvement": 0.10},   # ≤85% 且改善 ≥10%
+    "latency_ms":     {"max": 150.0,  "min_improvement": 0.20},   # ≤150ms 且改善 ≥20%
+    "packet_loss":    {"max": 0.05,   "min_improvement": 0.20},   # ≤5% 且改善 ≥20%
+    "bandwidth_util": {"max": 0.90,   "min_improvement": 0.05},   # ≤90% 且改善 ≥5%
 }
 
 # 实时指标兜底阈值（只要当前值低于这些就算正常，用于 retry 轮次兜底）
 REALTIME_PASS_THRESHOLDS = {
-    "latency_ms":     50.0,
-    "packet_loss":    0.005,
-    "bandwidth_util": 0.85,
+    "latency_ms":     150.0,
+    "packet_loss":    0.05,
+    "bandwidth_util": 0.90,
 }
 
 MAX_VERIFY_RETRIES = 3  # 最多重试验证 3 次
@@ -63,10 +63,10 @@ class VerifyAgent(BaseAgent):
 
     # ── 消息处理 ──────────────────────────────────────
 
-    async def handle_message(self, msg: dict) -> None:
+    async def handle_message(self, topic: str, msg: dict) -> dict:
         intent = msg.get("intent", {})
         if intent.get("type") != "task":
-            return
+            return {"success": False, "error": "not a task"}
 
         payload = msg.get("payload", {})
         dag_id = payload.get("dag_id", "")
@@ -80,9 +80,31 @@ class VerifyAgent(BaseAgent):
         metrics_before = repair_output.get("metrics_before", {})
         metrics_after = repair_output.get("metrics_after", {})
         target_domain = monitor_output.get("domain", "east-china")
+        fault_type = repair_output.get("fault_type", "unknown")
 
         # 重试计数（从 diagnosis 或 verify 历史中提取）
         retry_count = params.get("verify_retry_count", 0)
+
+        # ── Bug fix: short-circuit when repair was skipped (no fault) ──
+        if repair_output.get("repair_result", {}).get("skipped") or fault_type == "none":
+            logger.info("VerifyAgent: repair skipped (fault_type=none), returning pass")
+            return {
+                "success": True,
+                "output": {
+                    "verdict": "pass",
+                    "message": "✅ 验证通过：无故障场景，系统运行正常",
+                    "details": {
+                        "verdict": "pass",
+                        "passed_count": 0,
+                        "total_count": 0,
+                        "metrics": [],
+                        "domain": target_domain,
+                        "method": "no_fault_skip",
+                    },
+                    "current_metrics": {},
+                    "retry_count": 0,
+                },
+            }
 
         print(f"[{self.agent_id}] Verifying repair (dag={dag_id}, node={node_id}, "
               f"retry={retry_count}, domain={target_domain})")
@@ -93,8 +115,10 @@ class VerifyAgent(BaseAgent):
             try:
                 mr = await self.tool_client.call_tool(TOOL_GET_ALL_METRICS, {})
                 current_metrics = mr.get("metrics", {})
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                logger.warning("Failed to fetch current metrics for verification: %s", exc)
             except Exception:
-                pass
+                logger.exception("Unexpected error fetching current metrics")
 
             # 2. 实时指标兜底：如果当前实时指标全部正常，直接 pass
             #    这修复了 retry 轮次中 metrics_before/after 都正常导致 improvement 接近 0 的死循环

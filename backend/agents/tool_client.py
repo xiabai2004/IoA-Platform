@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 import json
 import logging
 import httpx
+from exceptions import MCPConnectionError
 
 logger = logging.getLogger("tool_client")
 
@@ -98,7 +99,7 @@ class McpToolClient(ToolClient):
     MCP 是 Anthropic 提出的标准工具调用协议。
     """
 
-    def __init__(self, mcp_server_url: str = "http://127.0.0.1:8001"):
+    def __init__(self, mcp_server_url: str = "http://127.0.0.1:8000/mcp"):
         self._server_url = mcp_server_url
         self._http = httpx.AsyncClient(timeout=30.0)
         self._session = None
@@ -137,7 +138,7 @@ class McpToolClient(ToolClient):
         await self._ensure_session()
 
         if self._session is None:
-            raise RuntimeError("MCP session not available")
+            raise MCPConnectionError("MCP session not available")
 
         try:
             # 调用 MCP 工具
@@ -160,8 +161,8 @@ class McpToolClient(ToolClient):
         if self._session:
             try:
                 await self._session.__aexit__(None, None, None)
-            except Exception:
-                pass
+            except (ConnectionError, OSError, RuntimeError) as exc:
+                logger.debug("Error closing MCP session: %s", exc)
         await self._http.aclose()
 
 
@@ -172,9 +173,9 @@ class AutoToolClient(ToolClient):
     这是推荐使用的 ToolClient 类型。
     """
 
-    def __init__(self, mcp_server_url: str = "http://127.0.0.1:8001"):
+    def __init__(self, mcp_server_url: str = "http://127.0.0.1:8000/mcp"):
         self._mcp_client = McpToolClient(mcp_server_url)
-        self._http_client = HttpToolClient(mcp_server_url)
+        self._http_client = HttpToolClient("http://127.0.0.1:8001")
         self._use_mcp = True
         self._initialized = False
 

@@ -9,7 +9,7 @@
 """
 
 from agents.base_agent import BaseAgent
-from agents.tool_client import HttpToolClient, TOOL_GET_METRICS
+from agents.tool_client import HttpToolClient, AutoToolClient, TOOL_GET_METRICS
 from ioa_middleware.bus import MessageBus
 
 # ── 异常阈值 ─────────────────────────────────────────────
@@ -32,7 +32,7 @@ class MonitorAgent(BaseAgent):
             bus=bus,
             config=config,
         )
-        self.tool_client = HttpToolClient()
+        self.tool_client = AutoToolClient()  # 优先 MCP，降级 HTTP
         self._domain = domain
 
     # ── 消息处理 ──────────────────────────────────────

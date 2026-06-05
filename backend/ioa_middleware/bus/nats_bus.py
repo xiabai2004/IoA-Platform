@@ -36,13 +36,13 @@ class NatsMessageBus(MessageBus):
         logger.info("NatsMessageBus connected to %s", self.servers)
 
     async def close(self) -> None:
-        for sid in self._subscriptions:
-            try:
-                await self._nc.unsubscribe(sid)
-            except Exception:
-                pass
-        self._subscriptions.clear()
         if self._nc:
+            for sid in self._subscriptions:
+                try:
+                    await self._nc.unsubscribe(sid)
+                except (ConnectionError, OSError) as exc:
+                    logger.debug("Error unsubscribing NATS sid=%s: %s", sid, exc)
+            self._subscriptions.clear()
             await self._nc.drain()
         logger.info("NatsMessageBus closed")
 

@@ -1,12 +1,14 @@
-"""In-process message bus for development and testing."""
+﻿"""In-process message bus for development and testing."""
 from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from collections import defaultdict
 from typing import Any
 
 from .base import MessageBus, MessageHandler
+from exceptions import NoHandlerError, MessageTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +51,7 @@ class MemoryMessageBus(MessageBus):
     ) -> dict[str, Any]:
         handlers = self._handlers.get(topic, [])
         if not handlers:
-            raise RuntimeError(f"No handler registered for topic {topic!r}")
+            raise NoHandlerError(f"No handler registered for topic {topic!r}", topic=topic)
 
         future: asyncio.Future[dict[str, Any]] = asyncio.Future()
 
@@ -60,7 +62,7 @@ class MemoryMessageBus(MessageBus):
         # Wrap the first handler with a capture so we can get the return value.
         # In a real NATS setup, request-reply is handled natively.
         # In memory mode, the handler publishes its result to a reply topic.
-        reply_topic = f"{topic}._reply.{id(future)}"
+        reply_topic = f"{topic}._reply.{uuid.uuid4().hex}"
         self._handlers[reply_topic].append(capture)
 
         payload_with_reply = {**payload, "_reply_to": reply_topic}
@@ -76,7 +78,7 @@ class MemoryMessageBus(MessageBus):
         try:
             return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
-            raise RuntimeError(
+            raise MessageTimeoutError(
                 f"Request to topic {topic!r} timed out after {timeout}s"
             )
         finally:

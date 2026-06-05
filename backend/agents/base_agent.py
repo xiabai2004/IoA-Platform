@@ -1,4 +1,4 @@
-"""Base agent class — all specialized agents inherit from this."""
+﻿"""Base agent class — all specialized agents inherit from this."""
 from __future__ import annotations
 
 import asyncio

@@ -24,6 +24,8 @@ from ioa_middleware.orchestrator.scheduler import init_scheduler, get_scheduler
 from ioa_middleware.a2a_server import router as a2a_router, init_a2a_router
 from fastapi.responses import RedirectResponse, HTMLResponse
 from pathlib import Path
+from async_utils import safe_task
+from exceptions import SchedulerNotInitializedError
 
 logger = logging.getLogger("main")
 
@@ -42,12 +44,12 @@ async def lifespan(app: FastAPI):
     await init_db(config["database"]["path"])
 
     # 启动后台任务
-    asyncio.create_task(health_check_loop())
+    safe_task(health_check_loop(), name="health_check")
 
     # Phase 3: 启动 DAG 调度器
     init_scheduler(bus, config)
     scheduler = get_scheduler()
-    asyncio.create_task(scheduler.start())
+    safe_task(scheduler.start(), name="dag_scheduler")
     print("[Scheduler] DAG scheduler started")
 
     # Phase 4: 启动所有 Agent
@@ -69,23 +71,27 @@ async def lifespan(app: FastAPI):
                 status="active",
             )
             await registry_store.register_agent(profile)
+        except KeyError as exc:
+            logger.warning("Malformed register message, missing field: %s", exc)
         except Exception:
-            pass
+            logger.exception("Unexpected error in on_register for %s", msg.get("agent_id"))
 
     async def on_heartbeat(_topic: str, msg: dict) -> None:
         """处理 Agent 心跳消息。"""
         try:
             await registry_store.heartbeat(msg["agent_id"])
+        except KeyError as exc:
+            logger.warning("Malformed heartbeat, missing field: %s", exc)
         except Exception:
-            pass
+            logger.exception("Unexpected error in on_heartbeat")
 
     await bus.subscribe("registry.register", on_register)
     await bus.subscribe("registry.heartbeat", on_heartbeat)
 
     for a in agents:
-        asyncio.create_task(a.start())
+        safe_task(a.start(), name=f"agent:{a.agent_id}")
     # 给 Agent 一点时间注册
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(2.0)
 
     print("[IoA Middleware] Started on port", config["middleware"]["port"])
     yield
@@ -95,13 +101,17 @@ async def lifespan(app: FastAPI):
     for a in agents:
         try:
             await a.stop()
+        except (ConnectionError, OSError) as exc:
+            logger.warning("Error stopping agent %s: %s", a.agent_id, exc)
         except Exception:
-            pass
+            logger.exception("Unexpected error stopping agent %s", a.agent_id)
     await bus.close()
     try:
         scheduler = get_scheduler()
         await scheduler.stop()
         logger.info("Scheduler stopped")
+    except (SchedulerNotInitializedError, RuntimeError):
+        pass  # Scheduler was never started
     except Exception as e:
         logger.error("Failed to stop scheduler: %s", e)
     await close_db()
@@ -233,6 +243,12 @@ Authorization: Bearer <pre_shared_key>
     init_a2a_router(ioap_send_func)
     app.include_router(a2a_router, tags=["A2A"])
 
+    # MCP Server (SSE transport) — enables McpToolClient streamable HTTP connection
+    from ioa_middleware.mcp_server import create_mcp_sse_app
+    mcp_app = create_mcp_sse_app(simulator_url)
+    app.mount("/mcp", mcp_app)
+    logger.info("MCP server mounted at /mcp (SSE transport)")
+
     # Health 端点
     @app.get("/health", tags=["Health"])
     async def health():
@@ -271,25 +287,43 @@ Authorization: Bearer <pre_shared_key>
 
     _dash_clients: list[WebSocket] = []
 
+    async def broadcast_dashboard(event: dict):
+        """向所有仪表盘 WebSocket 客户端广播事件"""
+        dead = []
+        for ws in _dash_clients:
+            try:
+                await ws.send_json(event)
+            except (WebSocketDisconnect, RuntimeError):
+                dead.append(ws)
+        for ws in dead:
+            try:
+                _dash_clients.remove(ws)
+            except ValueError:
+                pass
+
+    # 暴露给其他模块使用
+    app.state.broadcast_dashboard = broadcast_dashboard
+
     @app.websocket("/ws/dashboard")
     async def ws_dashboard(ws: WebSocket):
         await ws.accept()
         _dash_clients.append(ws)
         try:
             while True:
-                # 每 2 秒推送一次仪表盘事件
+                # 每 2 秒发送心跳
                 await _asyncio.sleep(2.0)
                 try:
                     await ws.send_json({
                         "type": "dashboard_ping",
                         "ts_ms": int(__import__('time').time() * 1000),
                     })
-                except Exception:
+                except (WebSocketDisconnect, RuntimeError):
                     break
         except WebSocketDisconnect:
             pass
         finally:
-            _dash_clients.remove(ws)
+            if ws in _dash_clients:
+                _dash_clients.remove(ws)
 
     return app
 

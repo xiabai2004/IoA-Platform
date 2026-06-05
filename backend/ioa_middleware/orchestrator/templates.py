@@ -92,7 +92,7 @@ def template_diagnose(params: dict) -> dict:
 @_register(
     "full_remediation",
     "监控 → 诊断 → 修复 → 验证 → 报告（完整闭环）",
-    ["修复", "处理", "解决", "自动", "全流程", "repair", "fix", "remediate", "auto", "full"],
+    ["修复", "处理", "解决", "自动", "全流程", "故障", "repair", "fix", "remediate", "auto", "full"],
 )
 def template_full_remediation(params: dict) -> dict:
     """完整闭环：监控 → 诊断 → 修复 → 闭环验证 → 报告。"""

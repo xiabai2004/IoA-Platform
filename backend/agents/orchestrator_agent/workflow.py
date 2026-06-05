@@ -91,8 +91,12 @@ async def parse_intent_node(state: OrchestratorState, llm_client=None) -> dict:
                     "messages": [f"[意图解析] LLM 提取: {json.dumps(parsed, ensure_ascii=False)}"],
                     "confidence": 0.85,
                 }
+        except (json.JSONDecodeError, KeyError) as exc:
+            logger.warning("LLM intent parse failed (will fallback to rules): %s", exc)
+        except (ConnectionError, TimeoutError) as exc:
+            logger.warning("LLM connection failed (will fallback to rules): %s", exc)
         except Exception:
-            pass
+            logger.warning("Unexpected LLM error, falling back to rules", exc_info=True)
     
     # 降级为规则解析
     intent = {
@@ -122,45 +126,16 @@ async def parse_intent_node(state: OrchestratorState, llm_client=None) -> dict:
 
 
 async def match_template_node(state: OrchestratorState, templates: dict = None) -> dict:
-    """模板匹配节点 — 根据意图选择 DAG 模板"""
-    intent = state["intent"]
-    user_input = state["user_input"]
-    
-    if not templates:
-        # 默认模板
-        templates = {
-            "full_remediation": {
-                "keywords": ["修复", "诊断", "全流程", "remediation", "fix"],
-                "description": "全流程故障修复",
-            },
-            "monitor_only": {
-                "keywords": ["监控", "检测", "monitor"],
-                "description": "仅监控",
-            },
-            "diagnose_only": {
-                "keywords": ["诊断", "分析", "diagnose"],
-                "description": "仅诊断",
-            },
-        }
-    
-    # 关键词匹配
-    best_match = "full_remediation"  # 默认
-    best_score = 0.0
-    
-    for name, meta in templates.items():
-        keywords = meta.get("keywords", [])
-        score = sum(1 for kw in keywords if kw in user_input.lower())
-        normalized_score = score / max(len(keywords), 1)
-        if normalized_score > best_score:
-            best_score = normalized_score
-            best_match = name
-    
-    return {
-        "template_name": best_match,
-        "template_meta": templates.get(best_match, {}),
-        "messages": [f"[模板匹配] 选择: {best_match} (score={best_score:.2f})"],
-    }
+    """模板匹配节点 — 复用 templates.match_template() 避免重复关键词逻辑"""
+    from ioa_middleware.orchestrator.templates import match_template
 
+    name, meta, score = match_template(state["user_input"])
+
+    return {
+        "template_name": name,
+        "template_meta": meta,
+        "messages": [f"[模板匹配] 选择: {name} (score={score:.2f})"],
+    }
 
 async def validate_params_node(state: OrchestratorState) -> dict:
     """参数验证节点 — 校验必要参数"""
@@ -196,28 +171,37 @@ async def generate_dag_node(state: OrchestratorState) -> dict:
     
     # 根据模板生成节点
     nodes = []
+    # node_id 缩短避免超过64字符限制；type/ccapability 匹配 DagNodeDef
     if template_name == "full_remediation":
         nodes = [
-            {"node_id": f"monitor-{dag_id}", "node_type": "monitor", "agent_capability": "monitoring"},
-            {"node_id": f"diagnose-{dag_id}", "node_type": "diagnose", "agent_capability": "diagnose", "depends_on": [f"monitor-{dag_id}"]},
-            {"node_id": f"repair-{dag_id}", "node_type": "repair", "agent_capability": "repair", "depends_on": [f"diagnose-{dag_id}"]},
-            {"node_id": f"verify-{dag_id}", "node_type": "verify", "agent_capability": "verify", "depends_on": [f"repair-{dag_id}"]},
-            {"node_id": f"report-{dag_id}", "node_type": "report", "agent_capability": "report", "depends_on": [f"verify-{dag_id}"]},
+            {"node_id": f"mon-{dag_id}", "type": "monitor", "capability": "monitor", "params": {"domain": domain}},
+            {"node_id": f"diag-{dag_id}", "type": "diagnose", "capability": "diagnose", "depends_on": [f"mon-{dag_id}"]},
+            {"node_id": f"fix-{dag_id}", "type": "repair", "capability": "repair", "depends_on": [f"diag-{dag_id}"]},
+            {"node_id": f"ver-{dag_id}", "type": "verify", "capability": "verify", "depends_on": [f"fix-{dag_id}"]},
+            {"node_id": f"rpt-{dag_id}", "type": "report", "capability": "report", "depends_on": [f"ver-{dag_id}"]},
         ]
     elif template_name == "monitor_only":
         nodes = [
-            {"node_id": f"monitor-{dag_id}", "node_type": "monitor", "agent_capability": "monitoring"},
+            {"node_id": f"mon-{dag_id}", "type": "monitor", "capability": "monitor", "params": {"domain": domain}},
         ]
     elif template_name == "diagnose_only":
         nodes = [
-            {"node_id": f"monitor-{dag_id}", "node_type": "monitor", "agent_capability": "monitoring"},
-            {"node_id": f"diagnose-{dag_id}", "node_type": "diagnose", "agent_capability": "diagnose", "depends_on": [f"monitor-{dag_id}"]},
+            {"node_id": f"mon-{dag_id}", "type": "monitor", "capability": "monitor", "params": {"domain": domain}},
+            {"node_id": f"diag-{dag_id}", "type": "diagnose", "capability": "diagnose", "depends_on": [f"mon-{dag_id}"]},
         ]
+    
+    DOMAIN_LABELS = {"east-china":"华东","north-china":"华北","south-china":"华南","west-china":"西南"}
+    domain_label = DOMAIN_LABELS.get(domain, domain)
+    template_labels = {
+        "full_remediation": "全流程诊断修复",
+        "monitor_only": "指标监控",
+        "diagnose_only": "故障诊断",
+    }
+    desc = template_labels.get(template_name, template_name)
     
     dag_definition = {
         "dag_id": dag_id,
-        "description": f"LangGraph 生成的 {template_name} DAG",
-        "domain": domain,
+        "description": f"{desc} — {domain_label}",
         "nodes": nodes,
         "metadata": {
             "template": template_name,
@@ -260,9 +244,15 @@ def create_orchestrator_workflow(llm_client=None, templates: dict = None):
     # 创建状态图
     workflow = StateGraph(OrchestratorState)
     
-    # 添加节点（使用闭包传递依赖）
-    workflow.add_node("parse_intent", lambda state: parse_intent_node(state, llm_client))
-    workflow.add_node("match_template", lambda state: match_template_node(state, templates))
+    # 添加节点（使用异步闭包传递依赖）
+    async def _parse_intent(state):
+        return await parse_intent_node(state, llm_client)
+
+    async def _match_template(state):
+        return await match_template_node(state, templates)
+
+    workflow.add_node("parse_intent", _parse_intent)
+    workflow.add_node("match_template", _match_template)
     workflow.add_node("validate_params", validate_params_node)
     workflow.add_node("generate_dag", generate_dag_node)
     

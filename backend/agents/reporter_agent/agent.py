@@ -6,12 +6,15 @@
 """
 
 import json
+import logging
 import time
 from typing import Any
 from agents.base_agent import BaseAgent
 from agents.tool_client import HttpToolClient, TOOL_GET_ALL_METRICS
 from agents.llm_client import get_llm_client
 from ioa_middleware.bus import MessageBus
+
+logger = logging.getLogger(__name__)
 
 
 class ReporterAgent(BaseAgent):
@@ -50,14 +53,16 @@ class ReporterAgent(BaseAgent):
             try:
                 mr = await self.tool_client.call_tool(TOOL_GET_ALL_METRICS, {})
                 final_metrics = mr.get("metrics", {})
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                logger.warning("Failed to fetch final metrics: %s", exc)
             except Exception:
-                pass
+                logger.exception("Unexpected error fetching final metrics")
 
             # 2. 生成结构化报告（含规则中文叙述）
             report = self._build_report(params, final_metrics, dag_id)
 
-            # 3. LLM 增强叙述（覆盖规则版本）
-            if self._llm.available:
+            # 3. LLM 增强叙述（覆盖规则版本，no-fault 场景跳过以避免误导）
+            if self._llm.available and report.get("summary", {}).get("fault_type") != "none":
                 llm_narrative = await self._llm_enhance(report)
                 if llm_narrative:
                     report["narrative"] = llm_narrative
@@ -93,14 +98,15 @@ class ReporterAgent(BaseAgent):
         # 提取关键信息
         fault_type = diagnosis.get("fault_type", "unknown")
         anomaly_count = analysis.get("anomaly_count", 0)
-        repair_success = repair_result.get("status") == "ok"
+        repair_skipped = repair_result.get("skipped", False) or fault_type == "none"
+        repair_success = repair_result.get("status") == "ok" if repair_result else (fault_type == "none")
 
         # 计算改善情况
         improvements = self._calculate_improvements(metrics_before, metrics_after)
 
         # 中文叙述（规则生成，LLM 可用时增强）
         narrative = self._build_chinese_narrative(
-            fault_type, anomaly_count, diagnosis, repair_success, improvements
+            fault_type, anomaly_count, diagnosis, repair_success, improvements, repair_skipped
         )
 
         return {
@@ -126,7 +132,7 @@ class ReporterAgent(BaseAgent):
 
     def _build_chinese_narrative(
         self, fault_type: str, anomaly_count: int, diagnosis: dict,
-        repair_success: bool, improvements: dict
+        repair_success: bool, improvements: dict, repair_skipped: bool = False
     ) -> str:
         """规则生成中文运维总结。"""
         fault_names = {
@@ -153,7 +159,9 @@ class ReporterAgent(BaseAgent):
                 parts.append(desc)
 
         # 修复段
-        if repair_success:
+        if fault_type == "none":
+            parts.append("系统运行正常，无需执行修复操作")
+        elif repair_success:
             parts.append("修复操作已成功执行")
         else:
             parts.append("修复操作未完全成功")

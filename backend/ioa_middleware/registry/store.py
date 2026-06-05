@@ -46,13 +46,19 @@ async def register_agent(profile: CapabilityProfile) -> None:
                 profile.metadata.version if profile.metadata else "N/A")
 
 
-async def heartbeat(agent_id: str) -> bool:
-    """更新心跳时间。返回 True 表示 Agent 存在。"""
+async def heartbeat(agent_id: str, load: float | None = None) -> bool:
+    """更新心跳时间。可选更新 load 值。返回 True 表示 Agent 存在。"""
     now_ms = int(time.time() * 1000)
-    cursor = await execute(
-        "UPDATE agents SET last_heartbeat_ms = ?, status = 'active' WHERE agent_id = ?",
-        (now_ms, agent_id),
-    )
+    if load is not None:
+        cursor = await execute(
+            "UPDATE agents SET last_heartbeat_ms = ?, status = 'active', load = ? WHERE agent_id = ?",
+            (now_ms, max(0.0, min(1.0, load)), agent_id),
+        )
+    else:
+        cursor = await execute(
+            "UPDATE agents SET last_heartbeat_ms = ?, status = 'active' WHERE agent_id = ?",
+            (now_ms, agent_id),
+        )
     return cursor.rowcount > 0
 
 

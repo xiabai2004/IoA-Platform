@@ -68,6 +68,17 @@ async def list_dags(status: str | None = None, limit: int = 50) -> list[dict]:
     )
 
 
+async def get_dags_batch(dag_ids: list[str]) -> list[dict]:
+    """批量获取 DAG 记录。"""
+    if not dag_ids:
+        return []
+    placeholders = ",".join("?" for _ in dag_ids)
+    return await fetch_all(
+        f"SELECT * FROM dags WHERE dag_id IN ({placeholders}) ORDER BY submitted_at_ms DESC",
+        tuple(dag_ids),
+    )
+
+
 # ═══════════════════════════════════════════════════════════
 #  DAG Nodes
 # ═══════════════════════════════════════════════════════════
@@ -152,6 +163,21 @@ async def get_dag_nodes(dag_id: str) -> list[dict]:
         "SELECT * FROM dag_nodes WHERE dag_id = ? ORDER BY id",
         (dag_id,),
     )
+
+
+async def get_dag_nodes_batch(dag_ids: list[str]) -> dict[str, list[dict]]:
+    """批量获取多个 DAG 的节点。返回 {dag_id: [nodes]}。"""
+    if not dag_ids:
+        return {}
+    placeholders = ",".join("?" for _ in dag_ids)
+    rows = await fetch_all(
+        f"SELECT * FROM dag_nodes WHERE dag_id IN ({placeholders}) ORDER BY dag_id, id",
+        tuple(dag_ids),
+    )
+    grouped: dict[str, list[dict]] = {did: [] for did in dag_ids}
+    for row in rows:
+        grouped.setdefault(row["dag_id"], []).append(row)
+    return grouped
 
 
 async def get_pending_nodes(dag_id: str) -> list[dict]:
@@ -247,3 +273,18 @@ async def get_verifications(dag_id: str) -> list[dict]:
         "SELECT * FROM verifications WHERE dag_id = ? ORDER BY id DESC",
         (dag_id,),
     )
+
+
+async def get_verifications_batch(dag_ids: list[str]) -> dict[str, list[dict]]:
+    """批量获取多个 DAG 的验证记录。返回 {dag_id: [verifications]}。"""
+    if not dag_ids:
+        return {}
+    placeholders = ",".join("?" for _ in dag_ids)
+    rows = await fetch_all(
+        f"SELECT * FROM verifications WHERE dag_id IN ({placeholders}) ORDER BY dag_id, id DESC",
+        tuple(dag_ids),
+    )
+    grouped: dict[str, list[dict]] = {did: [] for did in dag_ids}
+    for row in rows:
+        grouped.setdefault(row["dag_id"], []).append(row)
+    return grouped

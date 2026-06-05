@@ -186,6 +186,61 @@ async def list_dags(
 
 
 @router.get(
+    "/batch",
+    summary="批量获取 DAG 详情",
+    description="""
+批量获取多个 DAG 的完整详情（含节点和验证记录），避免 N+1 查询。
+
+### 查询参数
+
+- **ids**: 逗号分隔的 DAG ID 列表（如 `dag-001,dag-002`）
+
+### 响应示例
+
+```json
+{
+    "dags": [
+        {
+            "dag_id": "dag-001",
+            "status": "completed",
+            "nodes": [...],
+            "verifications": [...]
+        }
+    ]
+}
+```
+    """,
+    response_description="DAG 详情列表",
+)
+async def get_dags_batch(
+    ids: str = Query(..., description="Comma-separated DAG IDs"),
+):
+    """批量获取 DAG 详情，一次请求返回所有 DAG 的完整信息。"""
+    dag_ids = [did.strip() for did in ids.split(",") if did.strip()]
+    if not dag_ids:
+        return {"dags": [], "count": 0}
+
+    # 并行批量查询
+    import asyncio as _asyncio
+    dags_task = _asyncio.create_task(store.get_dags_batch(dag_ids))
+    nodes_task = _asyncio.create_task(store.get_dag_nodes_batch(dag_ids))
+    verifications_task = _asyncio.create_task(store.get_verifications_batch(dag_ids))
+
+    dags_list, nodes_map, verifs_map = await _asyncio.gather(
+        dags_task, nodes_task, verifications_task
+    )
+
+    result = []
+    for dag in dags_list:
+        dag_id = dag["dag_id"]
+        dag["nodes"] = nodes_map.get(dag_id, [])
+        dag["verifications"] = verifs_map.get(dag_id, [])
+        result.append(dag)
+
+    return {"dags": result, "count": len(result)}
+
+
+@router.get(
     "/{dag_id}",
     summary="获取 DAG 详情",
     description="""

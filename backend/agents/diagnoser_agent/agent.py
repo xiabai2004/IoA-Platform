@@ -7,10 +7,13 @@
 """
 
 import json
+import logging
 from agents.base_agent import BaseAgent
 from agents.tool_client import HttpToolClient, TOOL_GET_ALL_METRICS, TOOL_GET_TOPOLOGY
 from agents.llm_client import get_llm_client
 from ioa_middleware.bus import MessageBus
+
+logger = logging.getLogger(__name__)
 
 # ── 症状 → 故障类型映射 ─────────────────────────────────
 
@@ -31,7 +34,6 @@ SYMPTOM_RULES = [
         "name": "ddos_attack",
         "check": lambda a: any(
             m["metric"] == "bandwidth_util" and m["value"] >= 0.95
-            and m.get("severity") in ("high", "critical")
             for m in a
         ),
         "fault_type": "ddos",
@@ -120,13 +122,17 @@ class DiagnoserAgent(BaseAgent):
             try:
                 mr = await self.tool_client.call_tool(TOOL_GET_ALL_METRICS, {})
                 all_metrics = mr.get("metrics", {})
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                logger.warning("Failed to fetch all_metrics: %s", exc)
             except Exception:
-                pass
+                logger.exception("Unexpected error fetching all_metrics")
             try:
                 tr = await self.tool_client.call_tool(TOOL_GET_TOPOLOGY, {})
                 topology = tr
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                logger.warning("Failed to fetch topology: %s", exc)
             except Exception:
-                pass
+                logger.exception("Unexpected error fetching topology")
 
             # 2. 规则引擎诊断
             diagnosis = self._rule_diagnose(anomalies, metrics, all_metrics)

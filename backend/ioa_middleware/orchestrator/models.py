@@ -46,6 +46,7 @@ class DagNodeDef(BaseModel):
 
 class DagDefinition(BaseModel):
     """DAG 任务定义。"""
+    model_config = {"extra": "allow"}
     dag_id: str = Field(..., pattern=r"^[a-z0-9_-]{3,64}$")
     correlation_id: str | None = Field(None, description="关联 ID，用于审计追踪")
     nodes: list[DagNodeDef] = Field(..., min_length=1)

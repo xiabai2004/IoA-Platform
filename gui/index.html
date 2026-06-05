@@ -99,7 +99,8 @@ select{padding:6px 10px;border-radius:8px;border:1px solid var(--border);backgro
 .dag-status{font-size:0.65em;padding:2px 8px;border-radius:10px;font-weight:600}
 .dag-status.pending{background:#1e293b;color:#94a3b8}.dag-status.running{background:#1d4ed8;color:#93c5fd;animation:pulse 1.2s ease-in-out infinite}
 .dag-status.completed{background:#14532d;color:#86efac}.dag-status.failed{background:#7f1d1d;color:#fca5a5}
-.dag-desc{font-size:0.7em;color:var(--muted)}
+.dag-desc{font-size:0.7em;color:var(--muted);max-width:100%;cursor:default;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.dag-desc:hover{overflow:visible;position:relative;z-index:10;background:#0f172a;padding:4px 8px;border-radius:4px;border:1px solid #1e293b}
 .dag-nodes{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
 .dag-node{background:#111827;border-radius:6px;padding:4px 8px;font-size:0.65em;border:1px solid #1e3a5f;transition:all 0.3s}
 .dag-node.running{border-color:var(--accent);box-shadow:0 0 8px #38bdf844;animation:pulse 1.2s ease-in-out infinite}
@@ -319,6 +320,7 @@ const COLORS={'east-china':'#3b82f6','north-china':'#22c55e','south-china':'#f59
 function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
 
 let expandedDags={}, dagData={}, chart=null, topoNetwork=null;
+let topoNodeDS=null, topoEdgeDS=null;   // global refs for live update
 let metricsHistory={}; for(const d of DOMAINS) metricsHistory[d]={latency:[],loss:[],bw:[],labels:[]};
 const MAX_H=60;
 let msgBuffer=[];
@@ -335,24 +337,78 @@ async function getJSON(url){
   const r=await fetch(url,{headers:AUTH});if(!r.ok)throw Error(r.status);return r.json();
 }
 async function postJSON(url,body){
-  return fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...AUTH},body:JSON.stringify(body)});
+  return fetch(url,{method:'POST',headers:{'Content-Type':'application/json; charset=utf-8',...AUTH},body:JSON.stringify(body)});
 }
 
 /* ── NL / Fault ── */
 async function sendNL(){
   const txt=$('nlInput').value.trim();if(!txt)return;
+  const btn=document.querySelector('.cmd-input+button');
+  if(btn)btn.disabled=true;
   log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">progress_activity</span> 发送指令: ${esc(txt)}`);
   try{
-    await postJSON(`${API}/messages`,{
-      msg_id:'nl-'+Date.now(),from_agent:'gui',to_agent:'orchestrator-agent',
+    // 记录当前 DAG 数量
+    const beforeDags=Object.keys(dagData).length;
+    const beforeDagsSet=new Set(Object.keys(dagData));
+    const msgId='nl-'+Date.now();
+    const r=await postJSON(`${API}/messages`,{
+      msg_id:msgId,from_agent:'gui',to_agent:'orchestrator-agent',
       intent:{type:'user',description:txt,priority:'high'},
-      payload:{params:{message:txt}},correlation_id:'gui-'+Date.now(),ts_ms:Date.now()
+      payload:{params:{message:txt}},correlation_id:'gui-'+msgId,ts_ms:Date.now()
     });
-    log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--green)">check_circle</span> 已路由到 orchestrator-agent`);
+    if(!r.ok)throw Error('HTTP '+r.status);
+    log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">schedule</span> 指令已发送，等待 orchestrator 处理...`);
     toast('指令已发送','var(--green)');
+    $('nlInput').value='';
+
+    // 轮询等待新 DAG 出现（最多 30 秒，orchestrator 含 LLM 解析可能较慢）
+    let foundDag=null;
+    for(let i=0;i<30;i++){
+      await new Promise(r=>setTimeout(r,1000));
+      await loadDags();
+      const dags=Object.keys(dagData);
+      if(dags.length>beforeDags){
+        // 找到最新的 DAG
+        const newDag=dags.find(id=>!beforeDagsSet.has(id));
+        foundDag=newDag||dags[dags.length-1];
+        break;
+      }
+      // 检查是否有 DAG 变成 completed
+      for(const id of dags){
+        const d=dagData[id];
+        if(d&&d.status==='completed'&&!d._notified){
+          d._notified=true;
+          foundDag=id;
+          break;
+        }
+      }
+      if(foundDag)break;
+    }
+
+    if(foundDag){
+      const d=dagData[foundDag];
+      const st=d?d.status:'unknown';
+      if(st==='completed'){
+        log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--green)">check_circle</span> DAG <b>${esc(foundDag)}</b> 已完成！点击查看详情`);
+        toast(`DAG ${foundDag} 执行完成`,'var(--green)');
+        // 自动展开这个 DAG
+        expandedDags[foundDag]=true;
+        renderDags(Object.values(dagData).map(d=>({dag_id:d.dag_id,status:d.status,definition:d.definition,description:d.description,submitted_at_ms:d.submitted_at_ms,finished_at_ms:d.finished_at_ms})));
+      }else if(st==='running'||st==='pending'){
+        log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">schedule</span> DAG <b>${esc(foundDag)}</b> 执行中 (${st})...`);
+        toast(`DAG ${foundDag} 执行中`,'var(--yellow)');
+        expandedDags[foundDag]=true;
+      }else{
+        log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--red)">error</span> DAG <b>${esc(foundDag)}</b> 状态: ${st}`);
+      }
+    }else{
+      log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--muted)">info</span> 指令已投递（未检测到新 DAG，orchestrator 可能直接处理）`);
+    }
   }catch(e){
     log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--red)">cancel</span> ${esc(e.message)}`);
     toast('发送失败','var(--red)');
+  }finally{
+    if(btn)btn.disabled=false;
   }
 }
 
@@ -380,10 +436,18 @@ async function demoFault(){
 
 async function clearAllFaults(){
   try{
+    // 先查询当前活跃故障数量
+    let activeCount=0;
+    try{const f=await getJSON(`${SIM}/simulator/fault/list`);activeCount=(f.faults||f.active||[]).length;}catch(e){}
     await getJSON(`${SIM}/simulator/fault/clear_all`);
-    log('<span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle;color:var(--green)">delete_sweep</span> 已清除所有故障');
-    toast('故障已清除','var(--green)');
-  }catch(e){}
+    if(activeCount>0){
+      log(`<span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle;color:var(--green)">delete_sweep</span> 已清除 ${activeCount} 个故障`);
+      toast(`已清除 ${activeCount} 个故障`,'var(--green)');
+    }else{
+      log('<span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle;color:var(--muted)">info</span> 当前无活跃故障');
+      toast('当前无故障','var(--muted)');
+    }
+  }catch(e){log('清除故障失败: '+esc(e.message));}
 }
 
 async function runDemo(){
@@ -401,33 +465,39 @@ async function runDemo(){
 // 复合故障场景演示
 async function runMultiFaultDemo(){
   toast('复合故障演示: 多域同时故障→协同修复','var(--red)');
-  await clearAllFaults();
+  log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">warning</span> 开始复合故障演示...');
+  try{await clearAllFaults();}catch(e){log('清除故障失败: '+esc(e.message));}
   await new Promise(r=>setTimeout(r,500));
 
   // 注入华东链路拥塞
   $('faultType').value='link_congestion';
   $('faultDomain').value='east-china';
-  await demoFault();
+  try{await demoFault();}catch(e){log('华东故障注入失败: '+esc(e.message));}
   await new Promise(r=>setTimeout(r,300));
 
   // 注入华北 DDoS 攻击
   $('faultType').value='ddos';
   $('faultDomain').value='north-china';
-  await demoFault();
+  try{await demoFault();}catch(e){log('华北故障注入失败: '+esc(e.message));}
   await new Promise(r=>setTimeout(r,300));
 
   // 注入华南配置错误
   $('faultType').value='misconfig';
   $('faultDomain').value='south-china';
-  await demoFault();
+  try{await demoFault();}catch(e){log('华南故障注入失败: '+esc(e.message));}
   await new Promise(r=>setTimeout(r,500));
+
+  log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">send</span> 故障注入完成，正在发送修复指令...');
 
   // 发送修复指令
   $('nlInput').value='全网多域故障，请启动全域健康检查和修复';
-  await sendNL();
+  try{await sendNL();}catch(e){log('发送修复指令失败: '+esc(e.message));}
 }
 
 /* ── Topology ── */
+const EDGE_MAP={'Core-Router':'Core','Edge-R1':'Edge-east-china','Edge-R2':'Edge-north-china','Edge-R3':'Edge-south-china','Edge-R4':'Edge-west-china'};
+const REVERSE_EDGE_MAP=Object.fromEntries(Object.entries(EDGE_MAP).map(([k,v])=>[v,k]));
+
 function initTopo(){
   const nodes=[],edges=[];
   nodes.push({id:'Core',label:'Core-Router',shape:'box',size:30,
@@ -438,19 +508,116 @@ function initTopo(){
     const color=COLORS[d];
     nodes.push({id:eid,label:lbl,shape:'box',size:22,
       color:{background:color,border:color},font:{color:'#e2e8f0',size:11}});
-    edges.push({from:'Core',to:eid,arrows:'to',color:{color:color,opacity:0.5},width:2.5,arrowStrikethrough:false});
+    edges.push({id:`e-Core-${eid}`,from:'Core',to:eid,arrows:'to',color:{color:color,opacity:0.5},width:2.5,arrowStrikethrough:false});
     for(let i=1;i<=3;i++){
       const sid='srv-'+d+'-'+i;
       nodes.push({id:sid,label:'Srv'+i,shape:'dot',size:10,
         color:{background:color+'55',border:color},font:{color:'#64748b',size:8}});
-      edges.push({from:eid,to:sid,color:{color:'#1e293b'},width:1,dashes:[4,4]});
+      edges.push({id:`e-${eid}-${sid}`,from:eid,to:sid,color:{color:'#1e293b'},width:1,dashes:[4,4]});
     }
   }
-  topoNetwork=new vis.Network($('topo'),{nodes:new vis.DataSet(nodes),edges:new vis.DataSet(edges)},{
-    physics:{solver:'barnesHut',gravitationalConstant:-1800,springLength:120,stabilization:{iterations:120}},
+  topoNodeDS=new vis.DataSet(nodes);
+  topoEdgeDS=new vis.DataSet(edges);
+  topoNetwork=new vis.Network($('topo'),{nodes:topoNodeDS,edges:topoEdgeDS},{
+    physics:{solver:'barnesHut',barnesHut:{gravitationalConstant:-1800,centralGravity:0.3,springLength:120,springConstant:0.05,damping:0.09},stabilization:{iterations:120}},
     interaction:{hover:true,zoomView:true,dragView:true},
     edges:{arrows:{to:{enabled:true,scaleFactor:0.6}},smooth:{type:'curvedCW',roundness:0.2}}
   });
+  // 物理模拟完成后提示用户拓扑已稳定
+  topoNetwork.on('stabilizationIterationsDone',()=>{
+    const lbl=$('topoLabel');
+    if(lbl)lbl.textContent='拓扑已稳定';
+  });
+}
+
+/* Map simulator device/link IDs → GUI topology node IDs */
+function deviceToNodeId(target){
+  if(!target)return null;
+  if(target==='Core-Router')return 'Core';
+  if(EDGE_MAP[target])return EDGE_MAP[target];
+  // srv-east-china-1 → same format
+  if(target.startsWith('srv-'))return target;
+  return null;
+}
+
+function linkToEdgeIds(target){
+  // "Core-Router->Edge-R1" → {from:'Core',to:'Edge-east-china'}
+  if(!target)return null;
+  const parts=target.split('->');
+  if(parts.length!==2)return null;
+  const from=deviceToNodeId(parts[0]), to=deviceToNodeId(parts[1]);
+  if(!from||!to)return null;
+  // Find edge id
+  const edgeId=`e-${from}-${to}`;
+  return {edgeId,from,to};
+}
+
+/* ── Update topo visual from metrics + faults ── */
+function updateTopoStatus(regions,faults,agents){
+  if(!topoNodeDS||!topoEdgeDS)return;
+  const hasFaults=faults&&faults.length>0;
+
+  // 1. Reset all to default first
+  const defaultCoreBg='#1e3a5f',defaultCoreBorder='#38bdf8';
+  topoNodeDS.update({id:'Core',color:{background:defaultCoreBg,border:defaultCoreBorder},font:{color:'#e2e8f0',size:13,weight:'bold'}});
+  for(const d of DOMAINS){
+    const eid='Edge-'+d;
+    const c=COLORS[d];
+    topoNodeDS.update({id:eid,color:{background:c,border:c},font:{color:'#e2e8f0',size:11},size:22});
+    for(let i=1;i<=3;i++){
+      const sid='srv-'+d+'-'+i;
+      topoNodeDS.update({id:sid,color:{background:c+'55',border:c},font:{color:'#64748b',size:8},size:10});
+    }
+    topoEdgeDS.update({id:`e-Core-${eid}`,color:{color:c,opacity:0.5},width:2.5,dashes:false});
+    for(let i=1;i<=3;i++){
+      topoEdgeDS.update({id:`e-${eid}-srv-${d}-${i}`,color:{color:'#1e293b'},width:1,dashes:[4,4]});
+    }
+  }
+
+  // 2. Collect fault-affected nodes/edges so we skip metrics-only coloring for them
+  const faultedNodes=new Set();
+  const faultedEdges=new Set();
+
+  // 3. Apply fault overlays first (higher priority)
+  if(hasFaults){
+    for(const f of faults){
+      const tgt=f.target||'';
+      const li=linkToEdgeIds(tgt);
+      if(li){
+        const c=f.type==='link_outage'?'#ef4444':'#f59e0b';
+        const w=f.type==='link_outage'?5:3.5;
+        topoEdgeDS.update({id:li.edgeId,color:{color:c,opacity:1},width:w,dashes:f.type==='link_outage'?[2,4]:false});
+        faultedEdges.add(li.edgeId);
+      }
+      const ni=deviceToNodeId(tgt);
+      if(ni){
+        topoNodeDS.update({id:ni,color:{background:'#ef4444',border:'#f87171'},size:28,font:{color:'#fff',weight:'bold'}});
+        faultedNodes.add(ni);
+      }
+    }
+  }
+
+  // 4. Apply metrics severity to non-faulted edge nodes
+  if(regions){
+    for(const d of DOMAINS){
+      const r=regions[d];if(!r)continue;
+      const eid='Edge-'+d;
+      if(faultedNodes.has(eid))continue;  // fault styling takes priority
+      const lat=r.latency_ms||0, loss=(r.packet_loss||0)*100, bw=(r.bandwidth_util||0)*100;
+      const worst=(lat>=100||bw>=90||loss>=5)?'crit':(lat>=50||bw>=70||loss>=1)?'warn':'ok';
+      if(worst!=='ok'){
+        const bg=worst==='crit'?'#ef4444':'#f59e0b';
+        const border=worst==='crit'?'#f87171':'#fbbf24';
+        topoNodeDS.update({id:eid,color:{background:bg,border},size:26,font:{color:'#fff',size:11,weight:'bold'}});
+      }
+      // Also tint the Core→Edge link by severity (if not faulted)
+      const edgeId=`e-Core-${eid}`;
+      if(!faultedEdges.has(edgeId)&&worst!=='ok'){
+        const c=worst==='crit'?'#ef4444':'#f59e0b';
+        topoEdgeDS.update({id:edgeId,color:{color:c,opacity:0.8},width:worst==='crit'?4:3});
+      }
+    }
+  }
 }
 
 /* ── Metrics ── */
@@ -466,9 +633,9 @@ function updateMetrics(data){
     const worst=ll==='crit'||bl==='crit'||lol==='crit'?'critical':(ll==='warn'||bl==='warn'||lol==='warn'?'warn':'');
     html+=`<div class="metric-card ${worst}">
       <div class="metric-domain"><span class="dot" style="background:${COLORS[d]}"></span>${DOMAIN_CN[d]}</div>
-      <div class="metric-row"><span class="metric-label">延迟</span><span class="metric-value ${ll}">${lat.toFixed(1)}ms</span></div>
-      <div class="metric-row"><span class="metric-label">丢包</span><span class="metric-value ${lol}">${loss.toFixed(2)}%</span></div>
-      <div class="metric-row"><span class="metric-label">带宽</span><span class="metric-value ${bl}">${bw.toFixed(1)}%</span></div>
+      <div class="metric-row"><span class="metric-label">延迟</span><span class="metric-value ${ll}">${ll==='crit'?'🔴':ll==='warn'?'🟡':'✅'} ${lat.toFixed(1)}ms</span></div>
+      <div class="metric-row"><span class="metric-label">丢包</span><span class="metric-value ${lol}">${lol==='crit'?'🔴':lol==='warn'?'🟡':'✅'} ${loss.toFixed(2)}%</span></div>
+      <div class="metric-row"><span class="metric-label">带宽</span><span class="metric-value ${bl}">${bl==='crit'?'🔴':bl==='warn'?'🟡':'✅'} ${bw.toFixed(1)}%</span></div>
     </div>`;
     // History
     const h=metricsHistory[d];
@@ -479,6 +646,8 @@ function updateMetrics(data){
   $('metricsPanel').innerHTML=html;
   $('metricsTime').textContent=new Date().toLocaleTimeString();
   updateChart();
+  // Also update topology node colors from metrics severity
+  updateTopoStatus(m,null,null);
 }
 
 /* ── Chart ── */
@@ -517,9 +686,12 @@ async function loadAgents(){
       }catch(e){caps=[];}
       const capsHtml=caps.map(c=>`<span class="agent-cap">${esc(c)}</span>`).join('');
       const load=((a.load||0)*100).toFixed(0);
+      // 若负载为 0% 但 agent 在线，显示为"待命中"而非 0%
+      const loadDisplay = a.load > 0 ? `${load}%` :
+                          `<span style="color:var(--muted);font-style:italic">待命中</span>`;
       html+=`<tr><td><span class="agent-dot ${st}"></span>${st==='up'?'在线':'离线'}</td>
         <td>${esc(a.agent_id)}</td><td>${esc(DOMAIN_CN[a.domain]||a.domain)}</td>
-        <td>${capsHtml}</td><td>${load}%</td></tr>`;
+        <td>${capsHtml}</td><td>${loadDisplay}</td></tr>`;
     }
     html+='</table>';
     $('agentTable').innerHTML=html;
@@ -532,15 +704,34 @@ async function loadDags(){
     const d=await getJSON(`${API}/dag?limit=20`);
     const dags=d.dags||[];
     $('dagCount').textContent=dags.length;
+    // 使用批量接口一次性获取所有 DAG 详情（避免 N+1 查询）
     dagData={};
-    for(const g of dags){
+    if(dags.length>0){
+      const ids=dags.map(g=>g.dag_id).join(',');
       try{
-        const detail=await getJSON(`${API}/dag/${g.dag_id}`);
-        dagData[g.dag_id]=detail;
-      }catch(e){}
+        const batch=await getJSON(`${API}/dag/batch?ids=${encodeURIComponent(ids)}`);
+        const details=batch.dags||[];
+        for(const dt of details){
+          dagData[dt.dag_id]=dt;
+        }
+      }catch(e){
+        console.error('DAG batch error:',e);
+        // 降级：逐个获取
+        for(const g of dags){
+          try{
+            const detail=await getJSON(`${API}/dag/${g.dag_id}`);
+            dagData[g.dag_id]=detail;
+          }catch(e2){
+            console.error('DAG detail error:',g.dag_id,e2);
+          }
+        }
+      }
     }
     renderDags(dags);
-  }catch(e){}
+  }catch(e){
+    console.error('loadDags error:',e);
+    $('dagList').innerHTML=`<div style="color:var(--red);font-size:0.8em;padding:10px">加载失败: ${esc(e.message)}</div>`;
+  }
 }
 
 function renderDags(dags){
@@ -550,12 +741,27 @@ function renderDags(dags){
     const expanded=expandedDags[g.dag_id];
     const detail=dagData[g.dag_id];
     const nodes=detail?detail.nodes||[]:[];
+    // 解析 definition JSON 获取 description
+    let desc=g.description||'';
+    if(!desc&&g.definition){
+      try{desc=JSON.parse(g.definition).description||'';}catch(e){}
+    }
+    // 计算耗时
+    let duration='';
+    if(g.submitted_at_ms){
+      const end=g.finished_at_ms||Date.now();
+      const ms=end-g.submitted_at_ms;
+      duration=ms>1000?(ms/1000).toFixed(1)+'s':ms+'ms';
+    }
     html+=`<div class="dag-item ${expanded?'active':''}" onclick="toggleDag('${esc(g.dag_id)}')">
       <div class="dag-header">
         <span class="dag-id">${esc(g.dag_id)}</span>
         <span class="dag-status ${st}">${st}</span>
+        ${duration?`<span style="font-size:0.65em;color:var(--muted)">${duration}</span>`:''}
       </div>
-      <div class="dag-desc">${esc(g.description||'')}</div>`;
+      <div class="dag-desc" title="${esc(desc)}">${esc(desc)}</div>
+    ${st==='failed'&&g.result?`<div style="font-size:0.6em;color:var(--red);margin-top:2px">${esc(typeof g.result==='string'?g.result:(g.result.error||''))}</div>`:''}
+    ${st==='failed'&&detail&&detail.result?`<div style="font-size:0.6em;color:var(--red);margin-top:2px">${esc(typeof detail.result==='string'?detail.result:(detail.result.error||''))}</div>`:''}`;
     if(expanded&&nodes.length){
       html+='<div class="dag-nodes">';
       for(let i=0;i<nodes.length;i++){
@@ -569,6 +775,15 @@ function renderDags(dags){
       }
       html+='</div>';
     }
+    // 展开时显示验证结果
+    if(expanded&&detail&&detail.verifications&&detail.verifications.length){
+      html+='<div style="margin-top:6px;font-size:0.7em">';
+      for(const v of detail.verifications){
+        const vc=v.verdict==='pass'?'var(--green)':v.verdict==='fail'?'var(--red)':'var(--yellow)';
+        html+=`<div style="color:${vc}">✓ 验证: ${esc(v.verdict||'unknown')} | 修复前: ${esc(v.metric_before||'-')} → 修复后: ${esc(v.metric_after||'-')}</div>`;
+      }
+      html+='</div>';
+    }
     html+='</div>';
   }
   $('dagList').innerHTML=html||'<div style="color:var(--muted);font-size:0.8em;padding:10px">暂无 DAG 记录</div>';
@@ -576,7 +791,9 @@ function renderDags(dags){
 
 function toggleDag(id){
   expandedDags[id]=!expandedDags[id];
-  loadDags();
+  // 只重新渲染，不重新请求（dagData 已缓存）
+  const dags=Object.values(dagData).sort((a,b)=>(b.submitted_at_ms||0)-(a.submitted_at_ms||0));
+  renderDags(dags);
 }
 
 /* ── Messages ── */
@@ -586,7 +803,10 @@ async function loadMessages(){
     const msgs=d.messages||[];
     msgBuffer=msgs.reverse();
     renderMessages();
-  }catch(e){}
+  }catch(e){
+    console.error('loadMessages error:',e);
+    $('msgFlow').innerHTML=`<div style="color:var(--red);font-size:0.8em;padding:10px">加载失败: ${esc(e.message)}</div>`;
+  }
 }
 
 function renderMessages(){
@@ -604,6 +824,8 @@ function renderMessages(){
   }
   $('msgFlow').innerHTML=html||'<div style="color:var(--muted);font-size:0.8em;padding:10px">暂无消息</div>';
   $('msgCount').textContent=filtered.length;
+  // 自动滚动到最新消息
+  $('msgFlow').scrollTop=$('msgFlow').scrollHeight;
 }
 
 function filterMsgs(type,el){
@@ -627,7 +849,19 @@ function connectWS(){
     try{
       const d=JSON.parse(e.data);
       if(d.type==='dashboard_ping'){
-        // Heartbeat
+        // Heartbeat — 刷新连接状态
+        $('wsDot').className='ok';
+      }else if(d.type==='dag_update'){
+        // DAG 状态变化 — 立即刷新
+        loadDags();
+        if(d.status==='completed'){
+          toast(`DAG ${d.dag_id} 已完成`,'var(--green)');
+        }else if(d.status==='failed'){
+          toast(`DAG ${d.dag_id} 失败`,'var(--red)');
+        }
+      }else if(d.type==='node_update'){
+        // 节点完成 — 刷新 DAG 详情
+        loadDags();
       }
     }catch(err){}
   };
@@ -647,7 +881,10 @@ function connectSimWS(){
     try{
       const d=JSON.parse(e.data);
       if(d.type==='metrics'&&d.data){
-        updateMetrics(d.data.regions||d.data);
+        const regions=d.data.regions||d.data;
+        const faults=d.data.faults||[];
+        updateMetrics(regions);
+        updateTopoStatus(regions,faults,null);
       }
     }catch(err){}
   };

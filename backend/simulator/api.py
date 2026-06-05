@@ -174,5 +174,5 @@ async def shutdown():
     for ws in _ws_clients:
         try:
             await ws.close()
-        except Exception:
-            pass
+        except (WebSocketDisconnect, RuntimeError, OSError) as exc:
+            logger.debug("Error closing simulator WebSocket: %s", exc)

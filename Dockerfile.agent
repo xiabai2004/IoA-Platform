@@ -1,22 +1,37 @@
-# IoA Agent — generic agent container
-# The specific agent is selected via AGENT_NAME env var at runtime.
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
+# Install dependencies
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY backend/ .
+# Copy source code
+COPY backend/ ./backend/
 
-# Agent entrypoint script
-COPY scripts/agent_entrypoint.py /app/agent_entrypoint.py
+# Agent configuration via environment variables:
+#   AGENT_NAME, AGENT_ID, AGENT_DOMAIN, AGENT_CAPABILITY
+#   IOA_PSK, NATS_SERVERS, IOA_BUS_BACKEND
 
-CMD ["python", "/app/agent_entrypoint.py"]
+# Default: run as a standalone agent process
+CMD ["python", "-c", "\
+import asyncio, os, sys; \
+sys.path.insert(0, '/app/backend'); \
+from agents import create_all_agents; \
+from ioa_middleware.bus import create_bus; \
+from ioa_middleware.config import get_config; \
+async def main(): \
+    config = get_config(); \
+    bus = create_bus(config); \
+    await bus.connect(); \
+    agents = create_all_agents(bus, config); \
+    agent_id = os.environ.get('AGENT_ID', ''); \
+    target = [a for a in agents if a.agent_id == agent_id]; \
+    if target: \
+        print(f'Starting agent {agent_id}'); \
+        await target[0].start(); \
+    else: \
+        print(f'Agent {agent_id} not found, starting all'); \
+        await asyncio.gather(*[a.start() for a in agents]); \
+asyncio.run(main()) \
+"]

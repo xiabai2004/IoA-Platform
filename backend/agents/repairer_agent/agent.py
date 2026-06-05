@@ -55,8 +55,26 @@ class RepairerAgent(BaseAgent):
         fault_type = diagnosis.get("fault_type", "unknown")
         anomaly_details = monitor_output.get("anomalies", [])
 
+        # ── Bug fix: short-circuit when no fault detected ──
+        if fault_type == "none":
+            logger.info("[%s] No fault detected (dag=%s), skipping repair", self.agent_id, dag_id)
+            return {
+                "success": True,
+                "output": {
+                    "domain": domain,
+                    "fault_type": "none",
+                    "target": "",
+                    "repair_strategy_used": "none",
+                    "fallback_used": False,
+                    "repair_result": {"status": "ok", "message": "无故障，无需修复", "skipped": True},
+                    "metrics_before": {},
+                    "metrics_after": {},
+                    "active_faults_at_start": 0,
+                },
+            }
+
         # Determine the target (link/device) from anomaly data
-        target = self._extract_target(anomaly_details, diagnosis, domain)
+        target = await self._extract_target(anomaly_details, diagnosis, domain)
 
         logger.info(
             "[%s] Repairing dag=%s node=%s fault=%s target=%s domain=%s",
@@ -64,21 +82,25 @@ class RepairerAgent(BaseAgent):
         )
 
         try:
-            # 1. Check active faults
+            # 1. Check active faults — use fault registry target as primary source
             active_faults = []
             try:
                 fr = await self.tool_client.call_tool(TOOL_LIST_FAULTS, {})
                 active_faults = fr.get("faults", [])
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                logger.warning("Failed to list faults: %s", exc)
             except Exception:
-                pass
+                logger.exception("Unexpected error listing faults")
 
             # 2. Collect pre-repair metrics
             metrics_before = {}
             try:
                 mr = await self.tool_client.call_tool(TOOL_GET_ALL_METRICS, {})
                 metrics_before = mr.get("metrics", {})
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                logger.warning("Failed to fetch pre-repair metrics: %s", exc)
             except Exception:
-                pass
+                logger.exception("Unexpected error fetching pre-repair metrics")
 
             # 3. Execute repair (differentiated by fault type)
             if active_faults:
@@ -95,8 +117,10 @@ class RepairerAgent(BaseAgent):
             try:
                 mr = await self.tool_client.call_tool(TOOL_GET_ALL_METRICS, {})
                 metrics_after = mr.get("metrics", {})
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                logger.warning("Failed to fetch post-repair metrics: %s", exc)
             except Exception:
-                pass
+                logger.exception("Unexpected error fetching post-repair metrics")
 
             result = {
                 "success": repair_result.get("status") == "ok",
@@ -120,16 +144,43 @@ class RepairerAgent(BaseAgent):
 
     # ── Repair logic ──────────────────────────────────
 
-    def _extract_target(
+    async def _extract_target(
         self, anomalies: list[dict], diagnosis: dict, domain: str
     ) -> str:
-        """Extract the most likely target (link/device) from anomaly data."""
-        # Try to get target from diagnosis context
+        """Extract the most likely target (link/device) from anomaly data.
+
+        Priority:
+        1. Active fault's target from simulator fault registry (most reliable)
+        2. Diagnosis context target
+        3. First anomaly's link_id / device_id
+        4. Fallback to device-{domain}
+        """
+        # Priority 1: Query active faults from simulator
+        try:
+            fr = await self.tool_client.call_tool(TOOL_LIST_FAULTS, {})
+            active_faults = fr.get("faults", [])
+            fault_type = diagnosis.get("fault_type", "")
+            for f in active_faults:
+                if f.get("type") == fault_type:
+                    target = f.get("target", "")
+                    if target:
+                        logger.info("Using fault registry target: %s (fault_type=%s)", target, fault_type)
+                        return target
+            # No type match — use first active fault's target
+            if active_faults:
+                target = active_faults[0].get("target", "")
+                if target:
+                    logger.info("Using first active fault target: %s", target)
+                    return target
+        except Exception as e:
+            logger.debug("Could not query active faults: %s", e)
+
+        # Priority 2: Diagnosis context
         context = diagnosis.get("context", {})
         if context.get("target"):
             return context["target"]
 
-        # Fall back to first anomaly's source
+        # Priority 3: First anomaly
         if anomalies:
             first = anomalies[0]
             return first.get("link_id", first.get("device_id", f"device-{domain}"))

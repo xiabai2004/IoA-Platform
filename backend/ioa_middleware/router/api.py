@@ -188,8 +188,10 @@ async def post_message(msg: dict, request: Request):
             try:
                 await bus.publish(f"agent.{to_agent}", msg)
                 delivered = True
+            except (ConnectionError, OSError) as exc:
+                logger.warning("Bus publish to %s failed: %s", to_agent, exc)
             except Exception:
-                pass
+                logger.exception("Unexpected error publishing to bus for %s", to_agent)
         # Fallback to WebSocket (for scheduler or legacy connections)
         if not delivered:
             delivered = await _push_to_agent(to_agent, msg)
@@ -397,11 +399,12 @@ async def get_reranker_status():
     }
     ```
     """
-    from ioa_middleware.router.reranker import get_reranker
-    reranker = get_reranker()
+    # 不触发模型加载，直接检查单例状态
+    from ioa_middleware.router.reranker import _reranker, CrossEncoderReranker
+    model_loaded = _reranker is not None and _reranker._model is not None
     return {
-        "available": reranker.available,
-        "model": reranker.model_name,
+        "available": model_loaded,
+        "model": CrossEncoderReranker.DEFAULT_MODEL,
         "description": (
             "Cross-Encoder 联合编码精排：将 [任务描述, Agent能力描述] 拼接后"
             "一起送入模型做联合推理，精度显著优于 Bi-Encoder 的独立余弦相似度。"
@@ -474,8 +477,8 @@ async def ws_endpoint(ws: WebSocket):
     if old_ws is not None:
         try:
             await old_ws.close()
-        except Exception:
-            pass
+        except (WebSocketDisconnect, RuntimeError, OSError) as exc:
+            logger.debug("Error closing old WebSocket for %s: %s", agent_id, exc)
     _connections[agent_id] = ws
 
     try:
@@ -497,8 +500,8 @@ async def ws_endpoint(ws: WebSocket):
                 # 超时发送 ping
                 try:
                     await ws.send_text(json.dumps({"type": "ping"}))
-                except Exception:
-                    break
+                except (WebSocketDisconnect, RuntimeError, OSError):
+                    break  # Connection lost, exit loop
     except WebSocketDisconnect:
         logger.info("Agent %s disconnected", agent_id)
     except Exception:
