@@ -235,7 +235,14 @@ class VerifyAgent(BaseAgent):
         self, metrics_before: dict, metrics_after: dict,
         target_domain: str, retry_count: int
     ) -> dict:
-        """核心验证逻辑：逐项指标对比判定。"""
+        """核心验证逻辑：逐项指标对比判定。
+
+        判定规则：
+        1. after 指标本身正常（≤阈值）→ 直接通过
+        2. after 正常 + 有明显改善（≥20%）→ 通过
+        3. after 超标 + 未达重试上限 → retry
+        4. after 超标 + 重试耗尽 → fail
+        """
         before_domain = metrics_before.get(target_domain, {})
         after_domain = metrics_after.get(target_domain, {})
 
@@ -248,7 +255,9 @@ class VerifyAgent(BaseAgent):
 
             bv, av = float(bv), float(av)
             improvement = (bv - av) / bv if bv > 0 else 0.0  # 正值 = 改善
-            passed = (av <= threshold["max"]) and (improvement >= threshold["min_improvement"])
+            # 规则1: after 本身正常即通过（不需要 20% 改善）
+            # 规则2: after 正常 + 有明显改善也通过
+            passed = av <= threshold["max"]
 
             results.append({
                 "metric": metric_name,

@@ -25,9 +25,9 @@ def inject_link_congestion(link_id: str, severity: str = "high") -> dict:
     if not link:
         return {"success": False, "error": f"Link {link_id} not found"}
 
-    mul = {"low": 2.0, "medium": 4.0, "high": 8.0}.get(severity, 8.0)
-    link.fault_latency = (link.latency_ms or 50) * mul
-    link.fault_bandwidth_util = min(1.0, (link.bandwidth_util or 0.4) + 0.3)
+    mul = {"low": 3.0, "medium": 8.0, "high": 15.0}.get(severity, 15.0)
+    link.fault_latency = max(150.0, (link.latency_ms or 50) * mul)  # 至少 150ms，确保超过阈值
+    link.fault_bandwidth_util = min(1.0, max(0.90, (link.bandwidth_util or 0.4) + 0.55))  # 至少 90%
 
     fault_id = state.add_fault("link_congestion", link_id, {"severity": severity})
     logger.info("Injected link_congestion on %s (severity=%s)", link_id, severity)
@@ -43,6 +43,7 @@ def inject_link_outage(link_id: str) -> dict:
 
     link.fault_packet_loss = 1.0
     link.fault_latency = 9999.0
+    link.fault_bandwidth_util = 0.99
 
     fault_id = state.add_fault("link_outage", link_id)
     logger.info("Injected link_outage on %s", link_id)
@@ -121,7 +122,7 @@ class RepairAction:
     params: dict[str, Any] = field(default_factory=dict)
 
 
-def _apply_route_switch(link_id: str, backup_link_id: str) -> dict:
+def _apply_route_switch(link_id: str, backup_link_id: str = "", **kwargs) -> dict:
     """Switch traffic from primary link to backup link (route change)."""
     state = get_state()
     link = state.get_link(link_id)
@@ -136,46 +137,63 @@ def _apply_route_switch(link_id: str, backup_link_id: str) -> dict:
     if backup:
         backup.bandwidth_util = min(1.0, backup.bandwidth_util + 0.2)
 
-    logger.info("Route switch: %s → %s", link_id, backup_link_id)
+    # 清除故障记录
+    cleared = _clear_faults_for_target(link_id)
+    logger.info("Route switch: %s → %s (cleared %d faults)", link_id, backup_link_id, cleared)
     return {"success": True, "action": "route_switch", "primary": link_id, "backup": backup_link_id}
 
 
-def _apply_acl_deploy(device_id: str, rules: list[str] | None = None) -> dict:
+def _apply_acl_deploy(device_id: str, rules: list[str] | None = None, **kwargs) -> dict:
     """Deploy ACL rules to filter attack traffic (DDoS mitigation)."""
     state = get_state()
     rules = rules or ["deny ip any any established", "rate-limit icmp 1000"]
 
     for link in state.get_all_links():
         if link.from_node == device_id or link.to_node == device_id:
-            if link.fault_bandwidth_util:
-                link.fault_bandwidth_util = max(0, link.fault_bandwidth_util - 0.6)
-            if link.fault_packet_loss:
-                link.fault_packet_loss = max(0, link.fault_packet_loss - 0.5)
+            # 清除所有故障覆盖
+            link.fault_latency = None
+            link.fault_packet_loss = None
+            link.fault_bandwidth_util = None
 
-    logger.info("ACL deployed on %s (%d rules)", device_id, len(rules))
+    # 清除故障记录
+    cleared = _clear_faults_for_target(device_id)
+    logger.info("ACL deployed on %s (%d rules, cleared %d faults)", device_id, len(rules), cleared)
     return {"success": True, "action": "acl_deploy", "device": device_id, "rules_applied": len(rules)}
 
 
-def _apply_traffic_shaping(link_id: str, max_bandwidth: float = 0.7) -> dict:
+def _clear_faults_for_target(target: str) -> int:
+    """清除指定目标的所有故障记录。返回清除的故障数量。"""
+    state = get_state()
+    to_remove = [fid for fid, info in state.faults.items() if info.get("target") == target]
+    for fid in to_remove:
+        del state.faults[fid]
+    return len(to_remove)
+
+
+def _apply_traffic_shaping(link_id: str, max_bandwidth: float = 0.7, **kwargs) -> dict:
     """Apply traffic shaping/QoS to relieve congestion."""
     state = get_state()
     link = state.get_link(link_id)
     if link:
         link.bandwidth_util = min(link.bandwidth_util, max_bandwidth)
-        link.fault_latency = max(0, (link.fault_latency or 0) * 0.3)
+        # 清除所有拥塞相关的故障覆盖
+        link.fault_latency = None
         link.fault_bandwidth_util = None
 
-    logger.info("Traffic shaping applied on %s (max=%.0f%%)", link_id, max_bandwidth * 100)
+    # 清除故障记录
+    cleared = _clear_faults_for_target(link_id)
+    logger.info("Traffic shaping applied on %s (max=%.0f%%, cleared %d faults)", link_id, max_bandwidth * 100, cleared)
     return {"success": True, "action": "traffic_shape", "link": link_id, "max_bandwidth": max_bandwidth}
 
 
-def _apply_link_failover(link_id: str, standby_link_id: str) -> dict:
+def _apply_link_failover(link_id: str, standby_link_id: str = "", **kwargs) -> dict:
     """Fail over to a standby link when primary link fails."""
     state = get_state()
     failed = state.get_link(link_id)
     standby = state.get_link(standby_link_id)
 
     if failed:
+        # 清除所有故障覆盖
         failed.fault_latency = None
         failed.fault_packet_loss = None
         failed.fault_bandwidth_util = None
@@ -183,21 +201,25 @@ def _apply_link_failover(link_id: str, standby_link_id: str) -> dict:
     if standby:
         standby.bandwidth_util = min(1.0, standby.bandwidth_util + 0.15)
 
-    logger.info("Link failover: %s → %s", link_id, standby_link_id)
+    # 清除故障记录
+    cleared = _clear_faults_for_target(link_id)
+    logger.info("Link failover: %s → %s (cleared %d faults)", link_id, standby_link_id, cleared)
     return {"success": True, "action": "link_failover", "failed_link": link_id, "standby_link": standby_link_id}
 
 
-def _apply_restart_service(device_id: str, service_name: str = "bgpd") -> dict:
+def _apply_restart_service(device_id: str, service_name: str = "bgpd", **kwargs) -> dict:
     """Restart a service/interface on a device (recovery from CPU overload or misconfig)."""
     state = get_state()
     for link in state.get_all_links():
         if link.from_node == device_id or link.to_node == device_id:
-            if link.fault_latency:
-                link.fault_latency *= 0.1
-            if link.fault_packet_loss:
-                link.fault_packet_loss *= 0.1
+            # 清除所有故障覆盖
+            link.fault_latency = None
+            link.fault_packet_loss = None
+            link.fault_bandwidth_util = None
 
-    logger.info("Service %s restarted on %s", service_name, device_id)
+    # 清除故障记录
+    cleared = _clear_faults_for_target(device_id)
+    logger.info("Service %s restarted on %s (cleared %d faults)", service_name, device_id, cleared)
     return {"success": True, "action": "restart_service", "device": device_id, "service": service_name}
 
 

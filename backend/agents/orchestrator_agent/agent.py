@@ -47,7 +47,7 @@ class OrchestratorAgent(BaseAgent):
         self._dag_url = f"http://127.0.0.1:{port}/dag"
         # 使用与中间件相同的 PSK
         psk = (config or {}).get("auth", {}).get("pre_shared_key", "")
-        self._auth = {"Authorization": f"Bearer {psk}"}
+        self._auth = {"Authorization": f"Bearer {psk}"} if psk else {}
         self._dag_http = httpx.AsyncClient(timeout=30.0)
 
     # ── 消息处理 ──────────────────────────────────────

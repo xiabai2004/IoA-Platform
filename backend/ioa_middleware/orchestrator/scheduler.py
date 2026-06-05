@@ -69,8 +69,8 @@ class DagScheduler:
         psk = config.get("auth", {}).get("pre_shared_key", "")
         self._middleware_base = f"http://127.0.0.1:{port}"
         self._ws_url = f"ws://127.0.0.1:{port}/messages/ws?agent_id={ORCHESTRATOR_AGENT_ID}"
-        self._ws_auth_headers = {"Authorization": f"Bearer {psk}"}
-        self._auth_header = {"Authorization": f"Bearer {psk}"}
+        self._ws_auth_headers = {"Authorization": f"Bearer {psk}"} if psk else {}
+        self._auth_header = {"Authorization": f"Bearer {psk}"} if psk else {}
 
         # 语义路由引擎（SmartRouter 自动选择最佳可用引擎）
         self._router = SmartRouter()

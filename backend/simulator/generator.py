@@ -50,10 +50,10 @@ def _generate_packet_loss(base: float = 0.001) -> float:
     return min(_add_noise(val), 1.0)
 
 
-def _generate_bandwidth_util(base: float = 0.40) -> float:
-    """生成带宽使用率，基线 30-60%。"""
+def _generate_bandwidth_util(base: float = 0.25) -> float:
+    """生成带宽使用率，基线 15-45%。"""
     hour_mult = _get_hour_multiplier()
-    val = base * (0.6 + 0.8 * hour_mult) + random.uniform(-0.05, 0.05)
+    val = base * (0.6 + 0.6 * hour_mult) + random.uniform(-0.03, 0.03)
     return max(0.01, min(_add_noise(val), 1.0))
 
 
@@ -85,7 +85,11 @@ def update_all_links() -> None:
 
 
 def get_domain_metrics(domain: str) -> dict:
-    """聚合某个域的所有链路指标，返回域级别汇总数据。"""
+    """聚合某个域的所有链路指标，返回域级别汇总数据。
+
+    使用最大值聚合（瓶颈链路决定网络质量），
+    确保注入到域间链路的故障能正确反映到域级指标中。
+    """
     state = get_state()
     if domain not in DOMAINS:
         return {}
@@ -99,6 +103,16 @@ def get_domain_metrics(domain: str) -> dict:
     throughputs = []
     connections = 0
 
+    # 域间链路：Core-Router → Edge Router（故障常注入于此）
+    inter_link = state.get_link("Core-Router", edge_router)
+    if inter_link:
+        latencies.append(inter_link.get_effective_latency())
+        packet_losses.append(inter_link.get_effective_packet_loss())
+        bw_utils.append(inter_link.get_effective_bandwidth_util())
+        throughputs.append(inter_link.throughput_mbps)
+        connections += inter_link.connection_count
+
+    # 域内链路：Edge Router → Servers
     for srv in servers:
         link = state.get_link(edge_router, srv)
         if link:
@@ -112,12 +126,13 @@ def get_domain_metrics(domain: str) -> dict:
         return {"domain": domain, "latency_ms": 0, "packet_loss": 0, "bandwidth_util": 0,
                 "throughput_mbps": 0, "connection_count": 0}
 
+    # 使用最大值：瓶颈链路决定网络质量
     return {
         "domain": domain,
-        "latency_ms": round(sum(latencies) / len(latencies), 2),
-        "packet_loss": round(sum(packet_losses) / len(packet_losses), 5),
-        "bandwidth_util": round(sum(bw_utils) / len(bw_utils), 4),
-        "throughput_mbps": round(sum(throughputs) / len(throughputs), 2),
+        "latency_ms": round(max(latencies), 2),
+        "packet_loss": round(max(packet_losses), 5),
+        "bandwidth_util": round(max(bw_utils), 4),
+        "throughput_mbps": round(sum(throughputs), 2),  # 吞吐量用求和
         "connection_count": connections,
     }
 

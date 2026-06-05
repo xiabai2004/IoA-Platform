@@ -27,7 +27,7 @@ services:
       - IOA_PSK=${IOA_PSK}
       - NATS_SERVERS=nats://nats:4222
     ports:
-      - "8001:8001"
+      - "8003:8001"
     networks:
       - ioa-net
     depends_on:
@@ -48,7 +48,7 @@ services:
       - NATS_SERVERS=nats://nats:4222
       - IOA_BUS_BACKEND=nats
     ports:
-      - "8000:8000"
+      - "8002:8000"
     networks:
       - ioa-net
     depends_on:

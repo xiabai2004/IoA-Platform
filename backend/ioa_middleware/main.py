@@ -245,7 +245,8 @@ Authorization: Bearer <pre_shared_key>
 
     # MCP Server (SSE transport) — enables McpToolClient streamable HTTP connection
     from ioa_middleware.mcp_server import create_mcp_sse_app
-    mcp_app = create_mcp_sse_app(simulator_url)
+    _sim_url = config.get("simulator_url", "http://127.0.0.1:8001") if config else "http://127.0.0.1:8001"
+    mcp_app = create_mcp_sse_app(_sim_url)
     app.mount("/mcp", mcp_app)
     logger.info("MCP server mounted at /mcp (SSE transport)")
 
