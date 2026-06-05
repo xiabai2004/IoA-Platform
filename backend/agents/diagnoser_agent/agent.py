@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # ── 症状 → 故障类型映射 ─────────────────────────────────
 
 SYMPTOM_RULES = [
-    # (条件函数, 故障类型, 修复建议)
+    # 条件函数基于实际指标值判定，不依赖 Monitor 的 severity 标签（标签不够稳定）
     {
         "name": "link_outage_or_device_failure",
         "check": lambda a: any(
@@ -26,44 +26,54 @@ SYMPTOM_RULES = [
             for m in a
         ),
         "fault_type": "device_failure",
-        "confidence": 0.90,
+        "confidence": 0.95,
         "description": "完全丢包，疑似链路中断或设备离线",
         "repair_action": "link_failover",
     },
     {
         "name": "ddos_attack",
-        "check": lambda a: any(
-            m["metric"] == "bandwidth_util" and m["value"] >= 0.95
-            for m in a
+        "check": lambda a: (
+            any(m["metric"] == "bandwidth_util" and m["value"] >= 0.95 for m in a)
+            and any(m["metric"] == "latency_ms" and m["value"] >= 200.0 for m in a)
         ),
         "fault_type": "ddos",
-        "confidence": 0.85,
-        "description": "带宽利用率接近100%，疑似DDoS攻击",
+        "confidence": 0.90,
+        "description": "带宽接近100%且延迟极高，疑似DDoS攻击",
         "repair_action": "acl_deploy",
     },
     {
         "name": "link_congestion",
-        "check": lambda a: any(
-            m["metric"] == "latency_ms" and m["severity"] in ("high", "critical")
-            for m in a
-        ) and not any(
-            m["metric"] == "packet_loss" and m["value"] >= 0.99
-            for m in a
+        "check": lambda a: (
+            any(m["metric"] == "bandwidth_util" and m["value"] >= 0.85 for m in a)
+            and any(m["metric"] == "latency_ms" and m["value"] >= 100.0 for m in a)
+            and not any(m["metric"] == "packet_loss" and m["value"] >= 0.99 for m in a)
         ),
         "fault_type": "link_congestion",
-        "confidence": 0.80,
-        "description": "延迟显著升高但未完全中断，疑似链路拥塞",
+        "confidence": 0.85,
+        "description": "高带宽+高延迟但未中断，疑似链路拥塞",
         "repair_action": "traffic_shape",
     },
     {
         "name": "cpu_overload",
-        "check": lambda a: any(
-            m["metric"] == "latency_ms" and m["severity"] == "medium"
-            for m in a
+        "check": lambda a: (
+            any(m["metric"] == "latency_ms" and 80.0 <= m["value"] < 150.0 for m in a)
+            and not any(m["metric"] == "bandwidth_util" and m["value"] >= 0.85 for m in a)
         ),
         "fault_type": "cpu_overload",
-        "confidence": 0.70,
-        "description": "延迟中度升高，疑似路由器CPU过载",
+        "confidence": 0.65,
+        "description": "中等延迟升高但带宽正常，疑似CPU过载",
+        "repair_action": "restart_service",
+    },
+    {
+        "name": "cpu_overload_severe",
+        "check": lambda a: (
+            any(m["metric"] == "latency_ms" and m["value"] >= 150.0 for m in a)
+            and not any(m["metric"] == "bandwidth_util" and m["value"] >= 0.85 for m in a)
+            and not any(m["metric"] == "packet_loss" and m["value"] >= 0.99 for m in a)
+        ),
+        "fault_type": "cpu_overload",
+        "confidence": 0.75,
+        "description": "延迟严重升高但带宽正常，疑似CPU严重过载",
         "repair_action": "restart_service",
     },
     {

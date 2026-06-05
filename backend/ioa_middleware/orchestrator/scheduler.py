@@ -447,12 +447,35 @@ class DagScheduler:
         }
 
         try:
-            resp = await self._http.post(
-                f"{self._middleware_base}/messages",
-                json=task_msg,
-                headers=self._auth_header,
-            )
-            resp.raise_for_status()
+            # Retry dispatch up to max_retries times for intermittent connection issues
+            # (single-process self-call can occasionally fail under load)
+            dispatch_ok = False
+            last_error = ""
+            for dispatch_attempt in range(node.max_retries + 2):  # +2 because 0-based + 1 extra
+                try:
+                    resp = await self._http.post(
+                        f"{self._middleware_base}/messages",
+                        json=task_msg,
+                        headers=self._auth_header,
+                    )
+                    resp.raise_for_status()
+                    dispatch_ok = True
+                    break
+                except Exception as exc:
+                    last_error = str(exc)[:100]
+                    if dispatch_attempt < node.max_retries + 1:
+                        logger.warning(
+                            "Dispatch attempt %d/%d failed for node %s: %s — retrying",
+                            dispatch_attempt + 1, node.max_retries + 2,
+                            node.node_id, last_error,
+                        )
+                        await asyncio.sleep(0.5 * (dispatch_attempt + 1))
+                    else:
+                        raise  # Re-raise for the outer except
+
+            if not dispatch_ok:
+                raise RuntimeError(f"All dispatch attempts failed: {last_error}")
+
             logger.info("Dispatched node %s → agent %s", node.node_id, agent["agent_id"])
             self._no_agent_count.pop(node.node_id, None)  # 成功后重置退避计数
             # 更新 Agent 负载（增加活跃任务计数）

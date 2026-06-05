@@ -531,6 +531,8 @@ async function clearAllFaults(){
     if(activeCount>0){
       log(`<span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle;color:var(--green)">delete_sweep</span> 已清除 ${activeCount} 个故障`);
       toast(`已清除 ${activeCount} 个故障`,'success');
+      // 立即刷新拓扑（不等 Simulator WS 下一轮推送）
+      setTimeout(refreshTopoFromSimulator, 500);
     }else{
       log('<span class="material-symbols-outlined" style="font-size:1em;vertical-align:middle;color:var(--muted)">info</span> 当前无活跃故障');
       toast('当前无故障','info');
@@ -723,6 +725,21 @@ function updateTopoStatus(regions,faults,agents){
   }
 }
 
+/* ── Active topology refresh (on DAG completion) ── */
+async function refreshTopoFromSimulator(){
+  try{
+    const [metricsResp, faultsResp] = await Promise.all([
+      fetch(`${SIM}/simulator/metrics`).then(r => r.ok ? r.json() : null),
+      fetch(`${SIM}/simulator/faults`).then(r => r.ok ? r.json() : null)
+    ]);
+    const regions = metricsResp ? (metricsResp.metrics || metricsResp) : {};
+    const faults = faultsResp ? (faultsResp.faults || []) : [];
+    updateTopoStatus(regions, faults, null);
+  }catch(e){
+    console.warn('refreshTopoFromSimulator failed:', friendlyError(e));
+  }
+}
+
 /* ── Metrics ── */
 function level(v,lo,hi){return v>=hi?'crit':v>=lo?'warn':'ok';}
 
@@ -749,8 +766,8 @@ function updateMetrics(data){
   $('metricsPanel').innerHTML=html;
   $('metricsTime').textContent=new Date().toLocaleTimeString();
   updateChart();
-  // Also update topology node colors from metrics severity
-  updateTopoStatus(m,null,null);
+  // Topology coloring is handled by connectSimWS → updateTopoStatus(regions, faults)
+  // to avoid redundant resets. Do NOT call updateTopoStatus here.
 }
 
 /* ── Chart ── */
@@ -1017,10 +1034,12 @@ function connectWS(){
       const d=JSON.parse(e.data);
       if(d.type==='dashboard_ping'){
         $('wsDot').className='ok';
-      }else if(d.type==='dag_update'){
+      }else       if(d.type==='dag_update'){
         debouncedLoadDags();
         if(d.status==='completed'){
           toast(`DAG ${d.dag_id} 已完成`,'success');
+          // 主动拉取最新模拟器数据刷新拓扑（不等 Simulator WS 下一轮推送）
+          refreshTopoFromSimulator();
         }else if(d.status==='failed'){
           toast(`DAG ${d.dag_id} 失败`,'error');
         }

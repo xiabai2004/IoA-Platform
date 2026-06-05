@@ -73,14 +73,6 @@ class RepairerAgent(BaseAgent):
                 },
             }
 
-        # Determine the target (link/device) from anomaly data
-        target = await self._extract_target(anomaly_details, diagnosis, domain)
-
-        logger.info(
-            "[%s] Repairing dag=%s node=%s fault=%s target=%s domain=%s",
-            self.agent_id, dag_id, node_id, fault_type, target, domain,
-        )
-
         try:
             # 1. Check active faults — use fault registry target as primary source
             active_faults = []
@@ -91,6 +83,26 @@ class RepairerAgent(BaseAgent):
                 logger.warning("Failed to list faults: %s", exc)
             except Exception:
                 logger.exception("Unexpected error listing faults")
+
+            # Cross-reference: if diagnosis says X but active faults say Y, trust the registry
+            actual_fault_type = fault_type
+            if active_faults:
+                registry_types = [f.get("type") for f in active_faults if f.get("type")]
+                if fault_type not in registry_types and registry_types:
+                    actual_fault_type = registry_types[0]
+                    logger.warning(
+                        "[%s] Diagnosis fault_type=%r not found in active faults %s; "
+                        "using registry type %r instead",
+                        self.agent_id, fault_type, registry_types, actual_fault_type,
+                    )
+
+            # Determine the target (link/device) from anomaly data, using actual fault type
+            target = await self._extract_target(anomaly_details, diagnosis, domain, actual_fault_type)
+
+            logger.info(
+                "[%s] Repairing dag=%s node=%s fault=%s (diagnosis=%s) target=%s domain=%s",
+                self.agent_id, dag_id, node_id, actual_fault_type, fault_type, target, domain,
+            )
 
             # 2. Collect pre-repair metrics
             metrics_before = {}
@@ -104,11 +116,41 @@ class RepairerAgent(BaseAgent):
 
             # 3. Execute repair (differentiated by fault type)
             if active_faults:
-                repair_result = await self._execute_repair(fault_type, target, diagnosis)
+                repair_result = await self._execute_repair(actual_fault_type, target, diagnosis)
+
+                # Post-repair verification: confirm faults are actually cleared
+                try:
+                    fr2 = await self.tool_client.call_tool(TOOL_LIST_FAULTS, {})
+                    remaining = fr2.get("faults", [])
+                    if remaining:
+                        logger.warning(
+                            "[%s] Repair claimed success but %d faults remain: %s",
+                            self.agent_id, len(remaining),
+                            [f.get("type", "?") for f in remaining],
+                        )
+                        repair_result = {
+                            "status": "error",
+                            "strategy_used": repair_result.get("strategy_used", "unknown"),
+                            "fallback_used": repair_result.get("fallback_used", False),
+                            "message": f"Repair executed but {len(remaining)} faults still active",
+                            "remaining_faults": [f.get("type", "?") for f in remaining],
+                        }
+                except (ConnectionError, TimeoutError, OSError) as exc:
+                    logger.warning("Post-repair fault check failed: %s", exc)
+                except Exception:
+                    logger.exception("Unexpected error in post-repair fault check")
             else:
+                # ⚠️ active_faults is empty — this is suspicious because the DAG was
+                # dispatched based on detected anomalies. Either a race condition
+                # or the faults were externally cleared.
+                logger.warning(
+                    "[%s] No active faults found at repair time (dag=%s, fault_type=%s). "
+                    "This may indicate a race condition or premature fault clearing.",
+                    self.agent_id, dag_id, fault_type,
+                )
                 repair_result = {
-                    "status": "ok",
-                    "message": "No active faults found, repair skipped",
+                    "status": "warning",
+                    "message": "No active faults found — repair skipped",
                     "skipped": True,
                 }
 
@@ -126,7 +168,8 @@ class RepairerAgent(BaseAgent):
                 "success": repair_result.get("status") == "ok",
                 "output": {
                     "domain": domain,
-                    "fault_type": fault_type,
+                    "fault_type": fault_type,               # diagnostic type
+                    "actual_fault_type": actual_fault_type,  # confirmed from registry
                     "target": target,
                     "repair_strategy_used": repair_result.get("strategy_used", "none"),
                     "fallback_used": repair_result.get("fallback_used", False),
@@ -145,7 +188,7 @@ class RepairerAgent(BaseAgent):
     # ── Repair logic ──────────────────────────────────
 
     async def _extract_target(
-        self, anomalies: list[dict], diagnosis: dict, domain: str
+        self, anomalies: list[dict], diagnosis: dict, domain: str, fault_type: str = ""
     ) -> str:
         """Extract the most likely target (link/device) from anomaly data.
 
@@ -159,7 +202,7 @@ class RepairerAgent(BaseAgent):
         try:
             fr = await self.tool_client.call_tool(TOOL_LIST_FAULTS, {})
             active_faults = fr.get("faults", [])
-            fault_type = diagnosis.get("fault_type", "")
+            # Match by fault_type first (precise), then fallback to first active fault
             for f in active_faults:
                 if f.get("type") == fault_type:
                     target = f.get("target", "")

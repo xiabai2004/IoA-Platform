@@ -56,7 +56,9 @@ def inject_cpu_overload(device_id: str, load: float = 0.95) -> dict:
     affected = 0
     for link in state.get_all_links():
         if link.from_node == device_id or link.to_node == device_id:
-            link.fault_latency = (link.latency_ms or 50) * 5.0
+            # Scale latency to be clearly detectable (>100ms monitor threshold, >80ms diagnosis)
+            base = (link.latency_ms or 50)
+            link.fault_latency = max(120.0, base * 12.0)  # ensure >100ms for anomaly detection
             affected += 1
 
     fault_id = state.add_fault("cpu_overload", device_id, {"load": load})
@@ -122,6 +124,19 @@ class RepairAction:
     params: dict[str, Any] = field(default_factory=dict)
 
 
+def _clear_device_faults(device_id: str) -> int:
+    """Clear fault overlays from all links connected to a device. Returns count of links cleared."""
+    state = get_state()
+    count = 0
+    for link in state.get_all_links():
+        if link.from_node == device_id or link.to_node == device_id:
+            link.fault_latency = None
+            link.fault_packet_loss = None
+            link.fault_bandwidth_util = None
+            count += 1
+    return count
+
+
 def _apply_route_switch(link_id: str, backup_link_id: str = "", **kwargs) -> dict:
     """Switch traffic from primary link to backup link (route change)."""
     state = get_state()
@@ -133,11 +148,13 @@ def _apply_route_switch(link_id: str, backup_link_id: str = "", **kwargs) -> dic
         link.fault_latency = None
         link.fault_packet_loss = None
         link.fault_bandwidth_util = None
+    else:
+        # Device-targeted fallback: clear all links connected to the device
+        _clear_device_faults(link_id)
 
     if backup:
         backup.bandwidth_util = min(1.0, backup.bandwidth_util + 0.2)
 
-    # 清除故障记录
     cleared = _clear_faults_for_target(link_id)
     logger.info("Route switch: %s → %s (cleared %d faults)", link_id, backup_link_id, cleared)
     return {"success": True, "action": "route_switch", "primary": link_id, "backup": backup_link_id}
@@ -176,11 +193,12 @@ def _apply_traffic_shaping(link_id: str, max_bandwidth: float = 0.7, **kwargs) -
     link = state.get_link(link_id)
     if link:
         link.bandwidth_util = min(link.bandwidth_util, max_bandwidth)
-        # 清除所有拥塞相关的故障覆盖
         link.fault_latency = None
         link.fault_bandwidth_util = None
+    else:
+        # Device-targeted fallback: clear all links connected to the device
+        _clear_device_faults(link_id)
 
-    # 清除故障记录
     cleared = _clear_faults_for_target(link_id)
     logger.info("Traffic shaping applied on %s (max=%.0f%%, cleared %d faults)", link_id, max_bandwidth * 100, cleared)
     return {"success": True, "action": "traffic_shape", "link": link_id, "max_bandwidth": max_bandwidth}
@@ -190,18 +208,19 @@ def _apply_link_failover(link_id: str, standby_link_id: str = "", **kwargs) -> d
     """Fail over to a standby link when primary link fails."""
     state = get_state()
     failed = state.get_link(link_id)
-    standby = state.get_link(standby_link_id)
+    standby = state.get_link(standby_link_id) if standby_link_id else None
 
     if failed:
-        # 清除所有故障覆盖
         failed.fault_latency = None
         failed.fault_packet_loss = None
         failed.fault_bandwidth_util = None
+    else:
+        # Device-targeted fallback: clear all links connected to the device
+        _clear_device_faults(link_id)
 
     if standby:
         standby.bandwidth_util = min(1.0, standby.bandwidth_util + 0.15)
 
-    # 清除故障记录
     cleared = _clear_faults_for_target(link_id)
     logger.info("Link failover: %s → %s (cleared %d faults)", link_id, standby_link_id, cleared)
     return {"success": True, "action": "link_failover", "failed_link": link_id, "standby_link": standby_link_id}

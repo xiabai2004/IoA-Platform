@@ -33,16 +33,17 @@ logger = logging.getLogger("verifier_agent")
 # ── 验证阈值 ──────────────────────────────────────────────
 
 VERIFY_THRESHOLDS = {
-    "latency_ms":     {"max": 150.0,  "min_improvement": 0.20},   # ≤150ms 且改善 ≥20%
-    "packet_loss":    {"max": 0.05,   "min_improvement": 0.20},   # ≤5% 且改善 ≥20%
-    "bandwidth_util": {"max": 0.90,   "min_improvement": 0.05},   # ≤90% 且改善 ≥5%
+    "latency_ms":     {"max": 80.0,   "min_improvement": 0.20},   # ≤80ms 且改善 ≥20%
+    "packet_loss":    {"max": 0.02,   "min_improvement": 0.20},   # ≤2% 且改善 ≥20%
+    "bandwidth_util": {"max": 0.75,   "min_improvement": 0.05},   # ≤75% 且改善 ≥5%
 }
 
-# 实时指标兜底阈值（只要当前值低于这些就算正常，用于 retry 轮次兜底）
+# 实时指标兜底阈值（必须明显低于故障注入的最低值，否则验证器会误判：
+# link_congestion 注入最低 150ms/90%→旧阈值 150.0/0.90 恰好相等→误判 pass）
 REALTIME_PASS_THRESHOLDS = {
-    "latency_ms":     150.0,
-    "packet_loss":    0.05,
-    "bandwidth_util": 0.90,
+    "latency_ms":     80.0,      # 故障最低 150ms，阈值设为 80ms 确保不会误判
+    "packet_loss":    0.02,      # 故障最低 15%，阈值设为 2% 确保不会误判
+    "bandwidth_util": 0.75,      # 故障最低 90%，阈值设为 75% 确保不会误判
 }
 
 MAX_VERIFY_RETRIES = 3  # 最多重试验证 3 次
@@ -110,6 +111,41 @@ class VerifyAgent(BaseAgent):
               f"retry={retry_count}, domain={target_domain})")
 
         try:
+            # 0. 先检查 simulator 中是否仍有活跃故障（最权威的判定依据）
+            active_faults = []
+            try:
+                from agents.tool_client import TOOL_LIST_FAULTS
+                fr = await self.tool_client.call_tool(TOOL_LIST_FAULTS, {})
+                active_faults = fr.get("faults", [])
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                logger.warning("VerifyAgent: failed to check active faults: %s", exc)
+            except Exception:
+                logger.exception("VerifyAgent: unexpected error checking active faults")
+
+            if active_faults:
+                fault_types = [f.get("type", "?") for f in active_faults]
+                logger.warning(
+                    "VerifyAgent: domain=%s still has %d active faults: %s — FAIL",
+                    target_domain, len(active_faults), fault_types,
+                )
+                return {
+                    "success": False,
+                    "error": f"❌ 验证失败：仍有 {len(active_faults)} 个活跃故障 {fault_types}",
+                    "output": {
+                        "verdict": "fail",
+                        "message": f"仍有 {len(active_faults)} 个活跃故障：{fault_types}",
+                        "details": {
+                            "verdict": "fail",
+                            "active_faults": fault_types,
+                            "domain": target_domain,
+                            "method": "fault_registry_check",
+                        },
+                        "current_metrics": {},
+                        "retry_count": retry_count,
+                    },
+                    "_retry_dag_nodes": ["repair"],
+                }
+
             # 1. 获取当前实时指标（作为兜底判定依据）
             current_metrics = {}
             try:
