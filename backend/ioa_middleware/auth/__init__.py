@@ -15,16 +15,27 @@ from fastapi import Request, HTTPException, status
 
 logger = logging.getLogger("auth")
 
-# Load .env before any config checks (auth disabled check depends on it)
-try:
-    from dotenv import load_dotenv
+# Load .env before any config checks — parse directly to avoid dotenv ordering issues
+def _load_env_file():
+    """Parse .env file and load into os.environ. Searches cwd, parent, and backend/."""
     for p in [Path("."), Path(".."), Path("backend")]:
         env_path = p / ".env"
-        if env_path.exists():
-            load_dotenv(env_path, override=False)
+        if not env_path.exists():
+            continue
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, _, val = line.partition("=")
+                    key, val = key.strip(), val.strip().strip("\"'")
+                    if key and key not in os.environ:
+                        os.environ[key] = val
             break
-except ImportError:
-    pass
+        except OSError:
+            pass
+_load_env_file()
 
 
 # ── 预共享密钥加载 ────────────────────────────────────────
