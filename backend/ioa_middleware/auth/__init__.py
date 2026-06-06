@@ -10,9 +10,21 @@ import json
 import logging
 import os
 import secrets
+from pathlib import Path
 from fastapi import Request, HTTPException, status
 
 logger = logging.getLogger("auth")
+
+# Load .env before any config checks (auth disabled check depends on it)
+try:
+    from dotenv import load_dotenv
+    for p in [Path("."), Path(".."), Path("backend")]:
+        env_path = p / ".env"
+        if env_path.exists():
+            load_dotenv(env_path, override=False)
+            break
+except ImportError:
+    pass
 
 
 # ── 预共享密钥加载 ────────────────────────────────────────
@@ -39,16 +51,17 @@ def _get_psk_unsafe(config: dict) -> str:
 
 
 def _load_psk() -> str:
-    """从配置加载预共享密钥，拒绝弱密钥。"""
+    """从配置加载预共享密钥，拒绝弱密钥。认证关闭时跳过。"""
+    if os.environ.get("IOA_AUTH_ENABLED", "true").lower() == "false":
+        return ""
     from ioa_middleware.config import get_config
     config = get_config()
     return _get_psk_unsafe(config)
 
+# 是否启用认证（必须在 _load_psk 之前检查）
+_AUTH_ENABLED = os.environ.get("IOA_AUTH_ENABLED", "true").lower() != "false"
 
 _PRE_SHARED_KEY = _load_psk()
-
-# 是否启用认证（开发模式可关闭，但生产强制开启）
-_AUTH_ENABLED = os.environ.get("IOA_AUTH_ENABLED", "true").lower() != "false"
 if os.environ.get("IOA_ENV") == "production" and not _AUTH_ENABLED:
     raise RuntimeError("IOA_AUTH_ENABLED cannot be false in production mode")
 
