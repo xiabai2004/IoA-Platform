@@ -63,6 +63,19 @@ def _get_psk_unsafe(config: dict) -> str:
 
 def _load_psk() -> str:
     """从配置加载预共享密钥，拒绝弱密钥。认证关闭时跳过。"""
+    # Check if auth is explicitly disabled — read .env directly to avoid import order issues
+    import os as _os
+    for _p in [Path("."), Path(".."), Path(__file__).parent.parent.parent]:
+        _env = _p / ".env"
+        if _env.exists():
+            try:
+                for _line in open(_env, encoding="utf-8"):
+                    _line = _line.strip()
+                    if _line.startswith("IOA_AUTH_ENABLED="):
+                        if _line.split("=", 1)[1].strip().strip("\"'").lower() == "false":
+                            return ""
+            except OSError:
+                pass
     if os.environ.get("IOA_AUTH_ENABLED", "true").lower() == "false":
         return ""
     from ioa_middleware.config import get_config
