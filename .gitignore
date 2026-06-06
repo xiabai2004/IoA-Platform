@@ -59,3 +59,12 @@ htmlcov/
 # SQLite WAL files
 *.db-shm
 *.db-wal
+
+# Local temp files
+.codegraph/
+backup/
+tmp/
+nul
+fix-plan.md
+night_debug.py
+reasonix.toml
