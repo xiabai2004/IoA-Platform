@@ -170,6 +170,31 @@ select{padding:6px 10px;border-radius:8px;border:1px solid var(--border);backgro
 /* ── Material Icons ── */
 .material-symbols-outlined{font-variation-settings:'FILL'0,'wght'400,'GRAD'0,'opsz'20;color:var(--muted);user-select:none;font-size:1em}
 
+/* ── Fault Pulse Indicator ── */
+@keyframes faultPulse{0%,100%{opacity:1}50%{opacity:0.45}}
+.fault-pulse{animation:faultPulse 0.8s ease-in-out infinite}
+.fault-indicator{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:0.7em;font-weight:600;padding:2px 8px;border-radius:4px}
+.fault-indicator .dot{width:8px;height:8px;border-radius:50%}
+.fault-indicator.active{color:#fca5a5;background:#7f1d1d22;border:1px solid #7f1d1d44}
+.fault-indicator.clear{color:var(--green);background:transparent;border:1px solid transparent}
+
+/* ── Stage Timeline ── */
+.stage-bar{display:flex;gap:2px;align-items:center;padding:2px 8px;font-size:0.68em}
+.stage-item{flex:1;text-align:center;padding:3px 2px;border-radius:3px;color:var(--muted);background:#1e293b;transition:all 0.3s;display:flex;align-items:center;justify-content:center;gap:2px}
+.stage-item .material-symbols-outlined{font-size:0.85em!important;color:inherit}
+.stage-item.active{background:var(--accent);color:#fff;font-weight:600}
+.stage-item.done{background:#166534;color:#86efac}
+.stage-item.failed{background:#7f1d1d;color:#fca5a5}
+.stage-label{font-size:0.65em;color:var(--muted);text-align:center;margin-bottom:2px}
+
+/* ── Metrics Flash ── */
+@keyframes valueFlash{0%{color:var(--yellow)}100%{color:inherit}}
+.metric-flash{animation:valueFlash 0.6s ease-out}
+
+/* ── Simulator WS dot ── */
+#simDot{width:8px;height:8px;border-radius:50%;display:inline-block}
+#simDot.ok{background:var(--green)}#simDot.off{background:var(--red)}
+
 </style>
 </head>
 <body>
@@ -193,7 +218,9 @@ select{padding:6px 10px;border-radius:8px;border:1px solid var(--border);backgro
   </div>
   <div class="header-right">
     <span id="wsDot" class="off"></span>
-    <span id="wsLabel" style="font-size:0.7em;color:var(--muted)">未连接</span>
+    <span id="wsLabel" style="font-size:0.7em;color:var(--muted)">控制</span>
+    <span id="simDot" class="off" style="margin-left:12px"></span>
+    <span id="simLabel" style="font-size:0.7em;color:var(--muted)">模拟器</span>
     <span id="clock"></span>
   </div>
 </div>
@@ -235,6 +262,21 @@ select{padding:6px 10px;border-radius:8px;border:1px solid var(--border);backgro
   <div id="cmdStatus" class="cmd-status"></div>
 </div>
 
+<!-- Stage Timeline -->
+<div id="stageBar" class="stage-bar" style="margin:0 14px 4px;display:none">
+  <span class="material-symbols-outlined" style="font-size:1em;color:var(--muted);margin-right:4px">timer</span>
+  <div class="stage-item" data-stage="monitor"><span class="material-symbols-outlined" style="font-size:0.9em">monitoring</span> 检测</div>
+  <span class="material-symbols-outlined" style="font-size:0.7em;color:var(--border)">arrow_forward</span>
+  <div class="stage-item" data-stage="diagnose"><span class="material-symbols-outlined" style="font-size:0.9em">troubleshoot</span> 诊断</div>
+  <span class="material-symbols-outlined" style="font-size:0.7em;color:var(--border)">arrow_forward</span>
+  <div class="stage-item" data-stage="repair"><span class="material-symbols-outlined" style="font-size:0.9em">build</span> 修复</div>
+  <span class="material-symbols-outlined" style="font-size:0.7em;color:var(--border)">arrow_forward</span>
+  <div class="stage-item" data-stage="verify"><span class="material-symbols-outlined" style="font-size:0.9em">verified</span> 验证</div>
+  <span class="material-symbols-outlined" style="font-size:0.7em;color:var(--border)">arrow_forward</span>
+  <div class="stage-item" data-stage="report"><span class="material-symbols-outlined" style="font-size:0.9em">description</span> 报告</div>
+  <span id="stageElapsed" style="font-size:0.65em;color:var(--muted);margin-left:8px"></span>
+</div>
+
 <!-- Main Content -->
 <div class="main">
   <!-- Left Column: Monitor -->
@@ -244,6 +286,10 @@ select{padding:6px 10px;border-radius:8px;border:1px solid var(--border);backgro
       <div class="panel-header">
         <div class="panel-title">
           <span class="material-symbols-outlined">hub</span> 网络拓扑实时状态
+          <span id="faultIndicator" class="fault-indicator clear">
+            <span class="material-symbols-outlined" style="font-size:1.1em">check_circle</span>
+            <span id="faultCount">无故障</span>
+          </span>
         </div>
       </div>
       <div id="topo"></div>
@@ -284,6 +330,9 @@ select{padding:6px 10px;border-radius:8px;border:1px solid var(--border);backgro
         </div>
         <span id="agentCount" class="panel-badge"></span>
       </div>
+      <div style="font-size:0.65em;color:var(--muted);padding:2px 12px 0;line-height:1.4">
+        9个 Agent 实例 &mdash; 按能力标签 + 域分区，语义路由动态匹配
+      </div>
       <div id="agentTable" class="panel-content"></div>
     </div>
 
@@ -294,6 +343,9 @@ select{padding:6px 10px;border-radius:8px;border:1px solid var(--border);backgro
           <span class="material-symbols-outlined">account_tree</span> DAG 执行记录
         </div>
         <span id="dagCount" class="panel-badge"></span>
+      </div>
+      <div style="font-size:0.65em;color:var(--muted);padding:2px 12px 0;line-height:1.4">
+        有向无环图调度引擎 &mdash; 拓扑排序 → Agent 匹配 → 并行执行
       </div>
       <div id="dagList" class="panel-content"></div>
     </div>
@@ -306,12 +358,15 @@ select{padding:6px 10px;border-radius:8px;border:1px solid var(--border);backgro
         </div>
         <span id="msgCount" class="panel-badge"></span>
       </div>
+      <div style="font-size:0.65em;color:var(--muted);padding:2px 12px 0;line-height:1.4">
+        Agent 间消息路由总线 &mdash; 支持自然语言指令分发、任务委派与结果回传
+      </div>
       <div class="msg-filter-bar">
-        <button class="msg-filter active" onclick="filterMsgs('all',this)">全部</button>
-        <button class="msg-filter" onclick="filterMsgs('user',this)" style="color:#38bdf8">用户</button>
-        <button class="msg-filter" onclick="filterMsgs('task',this)" style="color:#f59e0b">任务</button>
-        <button class="msg-filter" onclick="filterMsgs('result',this)" style="color:#22c55e">结果</button>
-        <button class="msg-filter" onclick="filterMsgs('report',this)" style="color:#a855f7">报告</button>
+        <button class="msg-filter active" onclick="filterMsgs('all',this)" title="显示全部消息">全部</button>
+        <button class="msg-filter" onclick="filterMsgs('user',this)" style="color:#38bdf8" title="用户输入的自然语言指令">用户指令</button>
+        <button class="msg-filter" onclick="filterMsgs('task',this)" style="color:#f59e0b" title="Agent 间任务委派">任务委派</button>
+        <button class="msg-filter" onclick="filterMsgs('result',this)" style="color:#22c55e" title="任务执行结果">执行结果</button>
+        <button class="msg-filter" onclick="filterMsgs('report',this)" style="color:#a855f7" title="运维报告生成">运维报告</button>
       </div>
       <div class="msg-panel-wrap">
         <div id="msgFlow" class="msg-flow panel-content"></div>
@@ -326,32 +381,11 @@ select{padding:6px 10px;border-radius:8px;border:1px solid var(--border);backgro
 <script>
 const API=window.location.origin||'http://127.0.0.1:8000';
 const SIM=API.replace(/:\d+$/,'') + ':8001' || 'http://127.0.0.1:8001';
-// Auth token - stored in localStorage, configured on first use
-const AUTH_TOKEN = localStorage.getItem('ioa_auth_token') || '';
-const AUTH = AUTH_TOKEN ? {'Authorization': 'Bearer ' + AUTH_TOKEN} : {};
+// Auth token - disabled (IOA_AUTH_ENABLED=false)
+const AUTH_TOKEN = '';
+const AUTH = {};
 
-// Prompt for PSK only when auth is not disabled (check via health endpoint)
-// Auth state is checked asynchronously — if server rejects with 401, re-prompt
-let _authWarned = false;
-async function ensureAuth(){
-  if (AUTH_TOKEN) return true;
-  // Fire a quick request — if it 401s, auth is required
-  try{
-    const r = await fetch(API + '/health');
-    if (r.ok) return true; // server doesn't require auth
-  }catch(e){}
-  // 401 or unreachable — prompt for token
-  if (_authWarned) return false;
-  _authWarned = true;
-  const token = prompt('IoA Platform Auth Token (set via IOA_PSK):\n(Leave blank to skip if auth is disabled)');
-  if (token){
-    localStorage.setItem('ioa_auth_token', token);
-    location.reload();
-  }
-  return false;
-}
-// Run auth check on first load
-setTimeout(ensureAuth, 300);
+async function ensureAuth(){ return true; }
 const DOMAINS=['east-china','north-china','south-china','west-china'];
 const DOMAIN_CN={'east-china':'华东','north-china':'华北','south-china':'华南','west-china':'西南'};
 const COLORS={'east-china':'#3b82f6','north-china':'#22c55e','south-china':'#f59e0b','west-china':'#a855f7'};
@@ -564,34 +598,40 @@ async function runMultiFaultDemo(){
   if(!confirm('即将注入多域复合故障（华东链路拥塞 + 华北DDoS + 华南配置错误），是否继续？'))return;
   pushOp();
   try{
-    toast('复合故障演示: 多域同时故障→协同修复','warning');
+    toast('复合故障演示: 多域同时故障→逐域修复','warning');
     log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">warning</span> 开始复合故障演示...');
     try{await clearAllFaults();}catch(e){log('清除故障失败: '+esc(e.message));}
     await new Promise(r=>setTimeout(r,500));
 
-    // 注入华东链路拥塞
-    $('faultType').value='link_congestion';
-    $('faultDomain').value='east-china';
+    // Inject all faults first
+    $('faultType').value='link_congestion'; $('faultDomain').value='east-china';
     try{await demoFault();}catch(e){log('华东故障注入失败: '+esc(e.message));}
     await new Promise(r=>setTimeout(r,300));
 
-    // 注入华北 DDoS 攻击
-    $('faultType').value='ddos';
-    $('faultDomain').value='north-china';
+    $('faultType').value='ddos'; $('faultDomain').value='north-china';
     try{await demoFault();}catch(e){log('华北故障注入失败: '+esc(e.message));}
     await new Promise(r=>setTimeout(r,300));
 
-    // 注入华南配置错误
-    $('faultType').value='misconfig';
-    $('faultDomain').value='south-china';
+    $('faultType').value='misconfig'; $('faultDomain').value='south-china';
     try{await demoFault();}catch(e){log('华南故障注入失败: '+esc(e.message));}
-    await new Promise(r=>setTimeout(r,500));
+    await new Promise(r=>setTimeout(r,800));
 
-    log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">send</span> 故障注入完成，正在发送修复指令...');
+    // Send individual NL commands for each faulted region
+    const regions = [
+      {domain:'east-china', cn:'华东', fault:'链路拥塞'},
+      {domain:'north-china', cn:'华北', fault:'DDoS攻击'},
+      {domain:'south-china', cn:'华南', fault:'配置错误'}
+    ];
+    for (const r of regions) {
+      log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">send</span> 正在修复 ${r.cn}地区${r.fault}...`);
+      $('nlInput').value = r.cn + '地区' + r.fault + '，请全流程诊断修复';
+      await sendNL();
+      // Wait for DAG to complete before next
+      await new Promise(resolve=>setTimeout(resolve, 8000));
+    }
 
-    // 发送修复指令
-    $('nlInput').value='全网多域故障，请启动全域健康检查和修复';
-    try{await sendNL();}catch(e){log('发送修复指令失败: '+esc(e.message));}
+    log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--green)">check_circle</span> 复合故障演示完成！');
+    toast('复合故障演示完成','success');
   }catch(e){
     toast('复合故障演示失败: '+e.message,'error');
   }finally{
@@ -673,7 +713,7 @@ function updateTopoStatus(regions,faults,agents){
       const sid='srv-'+d+'-'+i;
       topoNodeDS.update({id:sid,color:{background:c+'55',border:c},font:{color:'#64748b',size:8},size:10});
     }
-    topoEdgeDS.update({id:`e-Core-${eid}`,color:{color:c,opacity:0.5},width:2.5,dashes:false});
+    topoEdgeDS.update({id:`e-Core-${eid}`,color:{color:c,opacity:0.8},width:2.5,dashes:false});
     for(let i=1;i<=3;i++){
       topoEdgeDS.update({id:`e-${eid}-srv-${d}-${i}`,color:{color:'#1e293b'},width:1,dashes:[4,4]});
     }
@@ -685,14 +725,23 @@ function updateTopoStatus(regions,faults,agents){
 
   // 3. Apply fault overlays first (higher priority)
   if(hasFaults){
+    updateFaultIndicator(faults);
     for(const f of faults){
       const tgt=f.target||'';
       const li=linkToEdgeIds(tgt);
       if(li){
-        const c=f.type==='link_outage'?'#ef4444':'#f59e0b';
-        const w=f.type==='link_outage'?5:3.5;
+        const c='#ef4444';
+        const w=f.type==='link_outage'?5:4;
         topoEdgeDS.update({id:li.edgeId,color:{color:c,opacity:1},width:w,dashes:f.type==='link_outage'?[2,4]:false});
         faultedEdges.add(li.edgeId);
+        if(li.to && !faultedNodes.has(li.to)){
+          topoNodeDS.update({id:li.to,color:{background:'#ef4444',border:'#f87171'},size:28,font:{color:'#fff',size:12,weight:'bold'}});
+          faultedNodes.add(li.to);
+        }
+        if(li.from && !faultedNodes.has(li.from)){
+          topoNodeDS.update({id:li.from,color:{background:'#7f1d1d',border:'#ef4444'},size:26,font:{color:'#fca5a5',size:12,weight:'bold'}});
+          faultedNodes.add(li.from);
+        }
       }
       const ni=deviceToNodeId(tgt);
       if(ni){
@@ -700,6 +749,8 @@ function updateTopoStatus(regions,faults,agents){
         faultedNodes.add(ni);
       }
     }
+  } else {
+    updateFaultIndicator([]);
   }
 
   // 4. Apply metrics severity to non-faulted edge nodes
@@ -725,20 +776,6 @@ function updateTopoStatus(regions,faults,agents){
   }
 }
 
-/* ── Active topology refresh (on DAG completion) ── */
-async function refreshTopoFromSimulator(){
-  try{
-    const [metricsResp, faultsResp] = await Promise.all([
-      fetch(`${SIM}/simulator/metrics`).then(r => r.ok ? r.json() : null),
-      fetch(`${SIM}/simulator/faults`).then(r => r.ok ? r.json() : null)
-    ]);
-    const regions = metricsResp ? (metricsResp.metrics || metricsResp) : {};
-    const faults = faultsResp ? (faultsResp.faults || []) : [];
-    updateTopoStatus(regions, faults, null);
-  }catch(e){
-    console.warn('refreshTopoFromSimulator failed:', friendlyError(e));
-  }
-}
 
 /* ── Metrics ── */
 function level(v,lo,hi){return v>=hi?'crit':v>=lo?'warn':'ok';}
@@ -753,9 +790,9 @@ function updateMetrics(data){
     const worst=ll==='crit'||bl==='crit'||lol==='crit'?'critical':(ll==='warn'||bl==='warn'||lol==='warn'?'warn':'');
     html+=`<div class="metric-card ${worst}">
       <div class="metric-domain"><span class="dot" style="background:${COLORS[d]}"></span>${DOMAIN_CN[d]}</div>
-      <div class="metric-row"><span class="metric-label">延迟</span><span class="metric-value ${ll}"><span class="status-dot ${ll}"></span>${lat.toFixed(1)}ms</span></div>
-      <div class="metric-row"><span class="metric-label">丢包</span><span class="metric-value ${lol}"><span class="status-dot ${lol}"></span>${loss.toFixed(2)}%</span></div>
-      <div class="metric-row"><span class="metric-label">带宽</span><span class="metric-value ${bl}"><span class="status-dot ${bl}"></span>${bw.toFixed(1)}%</span></div>
+      <div class="metric-row"><span class="metric-label">延迟</span><span class="metric-value ${ll}" id="m-${d}-latency_ms"><span class="status-dot ${ll}"></span>${lat.toFixed(1)}ms</span></div>
+      <div class="metric-row"><span class="metric-label">丢包</span><span class="metric-value ${lol}" id="m-${d}-packet_loss"><span class="status-dot ${lol}"></span>${loss.toFixed(2)}%</span></div>
+      <div class="metric-row"><span class="metric-label">带宽</span><span class="metric-value ${bl}" id="m-${d}-bandwidth_util"><span class="status-dot ${bl}"></span>${bw.toFixed(1)}%</span></div>
     </div>`;
     // History
     const h=metricsHistory[d];
@@ -766,8 +803,7 @@ function updateMetrics(data){
   $('metricsPanel').innerHTML=html;
   $('metricsTime').textContent=new Date().toLocaleTimeString();
   updateChart();
-  // Topology coloring is handled by connectSimWS → updateTopoStatus(regions, faults)
-  // to avoid redundant resets. Do NOT call updateTopoStatus here.
+  flashMetrics(m);
 }
 
 /* ── Chart ── */
@@ -1025,8 +1061,8 @@ function connectWS(){
   const ws=new WebSocket(wsUrl);
   ws.onopen=()=>{
     $('wsDot').className='ok';
-    $('wsLabel').textContent='已连接';
-    _wsReconnDelay=3000; // 重置重连延迟
+    $('wsLabel').textContent='控制';
+    _wsReconnDelay=3000;
     toast('WebSocket 已连接','success');
   };
   ws.onmessage=(e)=>{
@@ -1036,15 +1072,21 @@ function connectWS(){
         $('wsDot').className='ok';
       }else       if(d.type==='dag_update'){
         debouncedLoadDags();
-        if(d.status==='completed'){
+        if(d.status==='running'){
+          showStageTimeline();
+        }else if(d.status==='completed'){
           toast(`DAG ${d.dag_id} 已完成`,'success');
-          // 主动拉取最新模拟器数据刷新拓扑（不等 Simulator WS 下一轮推送）
           refreshTopoFromSimulator();
+          hideStageTimeline();
         }else if(d.status==='failed'){
           toast(`DAG ${d.dag_id} 失败`,'error');
+          hideStageTimeline();
         }
       }else if(d.type==='node_update'){
         debouncedLoadDags();
+        if(d.node_type && d.node_status){
+          updateStage(d.node_type, d.node_status);
+        }
       }
     }catch(err){console.warn('Dashboard WS parse error:',err);}
   };
@@ -1064,7 +1106,10 @@ function connectSimWS(){
   const ws=new WebSocket(`${API.replace('http','ws').replace(/:\d+$/,':8001')}/simulator/ws`);
   ws.onopen=()=>{
     console.log('Simulator WS connected');
+    $('simDot').className='ok';
+    $('simLabel').textContent='模拟器';
     _simReconnDelay=3000;
+    startTopoRefreshLoop();
   };
   ws.onmessage=(e)=>{
     try{
@@ -1078,10 +1123,99 @@ function connectSimWS(){
     }catch(err){console.warn('Simulator WS parse error:',err);}
   };
   ws.onclose=()=>{
+    $('simDot').className='off';
+    $('simLabel').textContent='重连中...';
     setTimeout(connectSimWS,_simReconnDelay);
     _simReconnDelay=Math.min(_simReconnDelay*2,30000);
   };
   ws.onerror=()=>ws.close();
+}
+
+/* ── Active topology refresh ── */
+async function refreshTopoFromSimulator(){
+  for(let attempt=0;attempt<3;attempt++){
+    if(attempt>0) await new Promise(r=>setTimeout(r,500));
+    try{
+      const [metricsResp, faultsResp] = await Promise.all([
+        fetch(`${SIM}/simulator/metrics`).then(r => r.ok ? r.json() : null),
+        fetch(`${SIM}/simulator/faults`).then(r => r.ok ? r.json() : null)
+      ]);
+      const regions = metricsResp ? (metricsResp.metrics || metricsResp) : {};
+      const faults = faultsResp ? (faultsResp.faults || []) : [];
+      updateTopoStatus(regions, faults, null);
+      return;
+    }catch(e){
+      if(attempt>=2)console.warn('refreshTopoFromSimulator failed');
+    }
+  }
+}
+let _topoRefreshTimer = null;
+function startTopoRefreshLoop(){
+  if(_topoRefreshTimer) return;
+  _topoRefreshTimer = setInterval(refreshTopoFromSimulator, 5000);
+}
+
+/* ── Fault Indicator ── */
+function updateFaultIndicator(faults){
+  const fi = $('faultIndicator'), fc = $('faultCount');
+  if(!fi||!fc)return;
+  const count = faults ? faults.length : 0;
+  if(count > 0){
+    fi.className = 'fault-indicator active';
+    fc.innerHTML = '<span class="dot fault-pulse"></span> ' + count + '\u4e2a\u6d3b\u8dc3\u6545\u969c';
+  } else {
+    fi.className = 'fault-indicator clear';
+    fc.innerHTML = '\u65e0\u6545\u969c';
+  }
+}
+
+/* ── Stage Timeline ── */
+let _stageStartMs = 0, _stageTimer = null;
+function showStageTimeline(){
+  const sb = $('stageBar');
+  if(sb){ sb.style.display = 'flex'; sb.querySelectorAll('.stage-item').forEach(el=>el.className='stage-item'); }
+  _stageStartMs = Date.now();
+  if(_stageTimer) clearInterval(_stageTimer);
+  _stageTimer = setInterval(()=>{
+    const el = $('stageElapsed');
+    if(el) el.textContent = ((Date.now()-_stageStartMs)/1000).toFixed(1)+'s';
+  }, 200);
+}
+function updateStage(nodeType, nodeStatus){
+  const sb = $('stageBar');
+  if(!sb)return;
+  const stageMap = {monitor:'monitor',diagnose:'diagnose',repair:'repair',verify:'verify',report:'report'};
+  const stageKey = stageMap[nodeType];
+  if(!stageKey)return;
+  const el = sb.querySelector('[data-stage="'+stageKey+'"]');
+  if(!el)return;
+  if(nodeStatus === 'running') el.className = 'stage-item active';
+  else if(nodeStatus === 'completed') el.className = 'stage-item done';
+  else if(nodeStatus === 'failed') el.className = 'stage-item failed';
+}
+function hideStageTimeline(){
+  if(_stageTimer){ clearInterval(_stageTimer); _stageTimer = null; }
+  const el = $('stageElapsed');
+  if(el) el.textContent = ((Date.now()-_stageStartMs)/1000).toFixed(1)+'s';
+  setTimeout(()=>{ const sb = $('stageBar'); if(sb) sb.style.display = 'none'; }, 3000);
+}
+
+/* ── Metrics Flash ── */
+let _lastMetricValues = {};
+function flashMetrics(regions){
+  for(const d of DOMAINS){
+    const r = regions[d]; if(!r)continue;
+    const prev = _lastMetricValues[d]||{};
+    ['latency_ms','bandwidth_util','packet_loss'].forEach(k=>{
+      const newVal = r[k]||0, oldVal = prev[k]||0;
+      const change = oldVal>0 ? Math.abs(newVal-oldVal)/oldVal : 0;
+      if(change > 0.15){
+        const cellId = 'm-'+d+'-'+k, el = $(cellId);
+        if(el){ el.classList.remove('metric-flash'); void el.offsetWidth; el.classList.add('metric-flash'); }
+      }
+    });
+    _lastMetricValues[d] = {latency_ms:r.latency_ms||0, bandwidth_util:r.bandwidth_util||0, packet_loss:r.packet_loss||0};
+  }
 }
 
 /* ── Clock ── */
