@@ -477,6 +477,10 @@ class DagScheduler:
                 raise RuntimeError(f"All dispatch attempts failed: {last_error}")
 
             logger.info("Dispatched node %s → agent %s", node.node_id, agent["agent_id"])
+            await self._notify_dashboard("node_update", {
+                "dag_id": state.dag_id, "node_id": node.node_id,
+                "node_type": node.node_type, "node_status": "running",
+            })
             self._no_agent_count.pop(node.node_id, None)  # 成功后重置退避计数
             # 更新 Agent 负载（增加活跃任务计数）
             agent_id = agent["agent_id"]
@@ -589,6 +593,7 @@ class DagScheduler:
             await self._notify_dashboard("node_update", {
                 "dag_id": dag_id, "node_id": node_id,
                 "status": "completed", "assigned_agent": node.assigned_agent,
+                "node_type": node.node_type, "node_status": "completed",
             })
         elif result.get("output", {}).get("retry_signal"):
             # 验证节点返回 retry → 重置上游 diagnose+repair 节点
