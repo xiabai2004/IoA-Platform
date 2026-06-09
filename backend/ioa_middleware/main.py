@@ -23,6 +23,7 @@ from ioa_middleware.orchestrator.api import router as dag_router
 from ioa_middleware.orchestrator.scheduler import init_scheduler, get_scheduler
 from ioa_middleware.a2a_server import router as a2a_router, init_a2a_router
 from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from async_utils import safe_task
 from exceptions import SchedulerNotInitializedError
@@ -265,8 +266,8 @@ Authorization: Bearer <pre_shared_key>
         except Exception as e:
             return {"status": "error", "detail": str(e)}
 
-    # GUI 仪表盘（每次请求重新读取，修改即时生效）
-    _GUI_PATH = Path(__file__).resolve().parent.parent.parent / "gui" / "index.html"
+    # GUI 仪表盘
+    _GUI_DIR = Path(__file__).resolve().parent.parent.parent / "gui"
 
     @app.get("/")
     async def root():
@@ -274,13 +275,11 @@ Authorization: Bearer <pre_shared_key>
 
     @app.get("/gui")
     async def gui():
-        html = _GUI_PATH.read_text(encoding="utf-8")
-        # 确保 WS URL 正确
-        html = html.replace(
-            "const WS_URL='ws://127.0.0.1:8000/messages/ws?agent_id=dashboard-gui'",
-            "const WS_URL='ws://127.0.0.1:8000/ws/dashboard'"
-        )
+        html = (_GUI_DIR / "index.html").read_text(encoding="utf-8")
         return HTMLResponse(html)
+
+    # 静态文件（CSS、JS）
+    app.mount("/gui", StaticFiles(directory=str(_GUI_DIR)), name="gui_static")
 
     # WebSocket 仪表盘实时推送
     from fastapi import WebSocket, WebSocketDisconnect

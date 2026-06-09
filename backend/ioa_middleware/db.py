@@ -114,10 +114,14 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts            ON audit_logs(ts_ms);
 
 # ── 公开 API ─────────────────────────────────────────────
 
-async def init_db(db_path: str = "data/ioa.db") -> aiosqlite.Connection:
+async def init_db(db_path: str | None = None) -> aiosqlite.Connection:
     """初始化数据库：确保目录存在、建表、建索引。返回全局连接。"""
     import logging
     logger = logging.getLogger("db")
+
+    if db_path is None:
+        from ioa_middleware.config import get_config
+        db_path = get_config()["database"]["path"]
 
     global _conn
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)

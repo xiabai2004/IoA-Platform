@@ -3,23 +3,12 @@
 # cp config.yaml.example config.yaml
 
 # LLM 配置
-# provider: deepseek | aliyun — 切换后 LLM 客户端自动适配
 llm:
   provider: deepseek
-  # DeepSeek 官方 API（OpenAI 兼容）
   deepseek:
     api_key: ${DEEPSEEK_API_KEY}  # 从环境变量读取
     model: deepseek-chat
     base_url: https://api.deepseek.com/v1
-  # 阿里云 DashScope（备选）
-  qwen_plus:
-    api_key: ${QWEN_API_KEY}  # 从环境变量读取
-    model: qwen-plus
-    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-  qwen_turbo:
-    api_key: ${QWEN_API_KEY}  # 从环境变量读取
-    model: qwen-turbo
-    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
 
 # 中间件端口
 middleware:

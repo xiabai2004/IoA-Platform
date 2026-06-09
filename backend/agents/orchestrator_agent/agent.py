@@ -3,7 +3,7 @@
 接收自然语言运维请求，解析意图 → 匹配模板 → 填充参数 → 提交 DAG。
 
 两种推理模式：
-- LLM 模式：用 qwen-plus 解析意图，提取 domain/fault_type 等参数
+- LLM 模式：用 DeepSeek 解析意图，提取 domain/fault_type 等参数
 - 规则模式：关键词匹配选择模板，正则提取 domain
 
 工厂函数: create_orchestrator_agent(config) → OrchestratorAgent

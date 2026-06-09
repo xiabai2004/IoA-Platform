@@ -1,11 +1,6 @@
-"""LLM 客户端 — 统一封装，多 Provider 支持
+"""LLM 客户端 — DeepSeek API 封装
 
-Provider 切换：修改 config.yaml 中 llm.provider 字段：
-- deepseek: DeepSeek 官方 API (deepseek-chat / deepseek-reasoner)
-- aliyun:   阿里云 DashScope (qwen-plus / qwen-turbo)
-
-所有 Provider 使用 OpenAI 兼容接口，langchain-openai 统一调用。
-无有效 API key 时自动降级为规则模式。
+使用 OpenAI 兼容接口（langchain-openai），无有效 API key 时自动降级为规则模式。
 
 用法：
     client = get_llm_client(config)
@@ -24,19 +19,13 @@ PROVIDER_DEFAULTS = {
         "base_url": "https://api.deepseek.com/v1",
         "api_key_env": "DEEPSEEK_API_KEY",
     },
-    "aliyun": {
-        "model": "qwen-plus",
-        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "api_key_env": "QWEN_API_KEY",
-    },
 }
 
 
 class LLMClient:
-    """LLM 调用客户端 — 多 Provider 支持。
+    """LLM 调用客户端 — DeepSeek API。
 
-    自动根据 config.yaml 的 llm.provider 字段选择后端，
-    无 API key 时降级为规则模式。
+    无 API key 时自动降级为规则模式。
     """
 
     def __init__(self, config: dict):

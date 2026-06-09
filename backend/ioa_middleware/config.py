@@ -21,7 +21,6 @@ logger = logging.getLogger("config")
 # 环境变量映射表
 ENV_MAPPINGS = {
     "DEEPSEEK_API_KEY": ("llm", "deepseek", "api_key"),
-    "QWEN_API_KEY": ("llm", "qwen_plus", "api_key"),
     "IOA_PSK": ("auth", "pre_shared_key"),
     "MIDDLEWARE_PORT": ("middleware", "port"),
     "SIMULATOR_PORT": ("simulator", "port"),
@@ -36,10 +35,6 @@ DEFAULT_CONFIG = {
         "deepseek": {
             "model": "deepseek-chat",
             "base_url": "https://api.deepseek.com/v1",
-        },
-        "qwen_plus": {
-            "model": "qwen-plus",
-            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         },
     },
     "middleware": {
@@ -115,15 +110,34 @@ def _apply_env_vars(config: dict) -> dict:
     return config
 
 
+def _resolve_backend_dir() -> Path:
+    """定位 backend/ 目录（基于当前文件位置或 CWD）。"""
+    # 优先用 __file__ 定位（最可靠）
+    here = Path(__file__).resolve().parent.parent  # config.py → ioa_middleware → backend
+    if (here / "run.py").exists():
+        return here
+    # 回退：CWD 是否就是 backend/
+    cwd = Path.cwd()
+    if (cwd / "run.py").exists():
+        return cwd
+    # 再回退：CWD/backend/ 是否存在
+    if (cwd / "backend" / "run.py").exists():
+        return cwd / "backend"
+    return here  # 最终回退
+
+
+BACKEND_DIR = _resolve_backend_dir()
+
+
 def load_config(config_path: str = "config.yaml") -> dict:
     """加载配置文件。
 
     优先级：环境变量 > 配置文件 > 默认值
     """
     # 0. 加载 .env 环境变量文件（必须优先于配置文件）
-    # 搜索路径: cwd → backend/
+    # 搜索路径: backend/ → cwd
     _searched = []
-    for _p in [Path("."), Path("backend")]:
+    for _p in [BACKEND_DIR, Path(".")]:
         env_path = _p / ".env"
         _searched.append(str(env_path.resolve()))
         if env_path.exists():
@@ -135,9 +149,9 @@ def load_config(config_path: str = "config.yaml") -> dict:
 
     config = DEFAULT_CONFIG.copy()
 
-    # 1. 尝试加载配置文件（cwd → backend/）
+    # 1. 尝试加载配置文件（backend/ → cwd）
     _config_file = None
-    for _p in [Path(config_path), Path("backend") / config_path]:
+    for _p in [BACKEND_DIR / config_path, Path(config_path)]:
         if _p.exists():
             _config_file = _p
             break
@@ -168,7 +182,14 @@ def load_config(config_path: str = "config.yaml") -> dict:
     config["bus"].setdefault("backend", os.environ.get("IOA_BUS_BACKEND", "memory"))
     config["bus"].setdefault("nats_servers", os.environ.get("NATS_SERVERS", "nats://nats:4222"))
 
-    # 4. 验证必需的敏感配置
+    # 4. 统一数据库路径：确保始终指向 backend/data/ioa.db
+    db_path = config.get("database", {}).get("path", "data/ioa.db")
+    if not Path(db_path).is_absolute():
+        resolved = (BACKEND_DIR / db_path).resolve()
+        config["database"]["path"] = str(resolved)
+        logger.debug("Database path resolved: %s -> %s", db_path, resolved)
+
+    # 5. 验证必需的敏感配置
     _validate_config(config)
 
     return config
