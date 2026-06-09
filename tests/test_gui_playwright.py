@@ -334,7 +334,7 @@ class TestUserScenarios:
 
         # 注入多个故障
         faults = [
-            ("link_congestion", "Edge-R1"),
+            ("link_congestion", "Core-Router->Edge-R1"),
             ("ddos", "Edge-R2"),
             ("misconfig", "Edge-R3"),
         ]

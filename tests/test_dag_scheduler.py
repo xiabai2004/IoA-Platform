@@ -45,13 +45,14 @@ class TestDagTopologicalSort:
         assert ids[2] == "cc"
 
     def test_cycle_detection(self):
-        """AA → BB → AA should raise ValueError."""
+        """AA → BB → AA should raise DagValidationError."""
+        from exceptions import DagValidationError
         nodes = [
             DagNodeDef(node_id="aa", type="monitor", depends_on=["bb"], capability="monitor", domain="east"),
             DagNodeDef(node_id="bb", type="diagnose", depends_on=["aa"], capability="diagnose", domain="global"),
         ]
         scheduler = self._make_scheduler()
-        with pytest.raises(ValueError, match="cycle"):
+        with pytest.raises(DagValidationError, match="cycle"):
             scheduler._topological_sort(nodes)
 
     def test_single_node_dag(self):
