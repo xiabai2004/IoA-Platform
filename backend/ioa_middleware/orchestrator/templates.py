@@ -141,7 +141,7 @@ def template_full_remediation(params: dict) -> dict:
 @_register(
     "health_check",
     "全 4 域健康检查 + 汇总报告",
-    ["健康检查", "全局", "所有", "整体", "巡检", "health", "all", "overview", "summary"],
+    ["健康检查", "巡检", "health", "overview"],
 )
 def template_health_check(params: dict) -> dict:
     """全 4 域监控 → 汇总报告。"""
@@ -166,6 +166,73 @@ def template_health_check(params: dict) -> dict:
         "dag_id": dag_id,
         "correlation_id": params.get("correlation_id", dag_id),
         "description": "全域网健康检查",
+        "nodes": nodes,
+    }
+
+
+@_register(
+    "full_remediation_all",
+    "全 4 域故障修复（监控 → 诊断 → 修复 → 验证 → 报告 × 4 域）",
+    ["全域", "所有域", "全部域", "全局修复", "所有地区", "全部地区",
+     "所有故障", "全部故障", "all domains", "all regions", "global fix"],
+)
+def template_full_remediation_all(params: dict) -> dict:
+    """全 4 域完整闭环：每域独立 monitor → diagnose → repair → verify，最终汇总报告。"""
+    domains = ["east-china", "north-china", "south-china", "west-china"]
+    dag_id = params.get("dag_id", f"dag-remediate-all-{uuid.uuid4().hex[:8]}")
+    nodes = []
+    report_deps = []
+
+    for domain in domains:
+        prefix = domain.replace("-", "")
+        mon_id = f"mon-{prefix}"
+        diag_id = f"diag-{prefix}"
+        repair_id = f"fix-{prefix}"
+        verify_id = f"ver-{prefix}"
+
+        nodes.extend([
+            {
+                "node_id": mon_id,
+                "type": "monitor",
+                "capability": "monitor",
+                "domain": domain,
+                "params": {"domain": domain},
+            },
+            {
+                "node_id": diag_id,
+                "type": "diagnose",
+                "capability": "diagnose",
+                "domain": domain,
+                "depends_on": [mon_id],
+            },
+            {
+                "node_id": repair_id,
+                "type": "repair",
+                "capability": "repair",
+                "domain": domain,
+                "depends_on": [diag_id],
+            },
+            {
+                "node_id": verify_id,
+                "type": "verify",
+                "capability": "verify",
+                "domain": domain,
+                "depends_on": [repair_id],
+            },
+        ])
+        report_deps.append(verify_id)
+
+    nodes.append({
+        "node_id": "report-all",
+        "type": "report",
+        "capability": "report",
+        "depends_on": report_deps,
+    })
+
+    return {
+        "dag_id": dag_id,
+        "correlation_id": params.get("correlation_id", dag_id),
+        "description": "全域故障自动诊断修复（4域并行 + 汇总报告）",
         "nodes": nodes,
     }
 

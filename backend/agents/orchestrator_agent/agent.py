@@ -165,6 +165,10 @@ class OrchestratorAgent(BaseAgent):
     def _extract_domain(self, text: str) -> str:
         """从文本中提取域信息。"""
         text_lower = text.lower()
+        # 全域关键词
+        global_keywords = ["全域", "所有域", "全部域", "全局", "所有地区", "全部地区", "所有故障", "全部故障"]
+        if any(kw in text for kw in global_keywords):
+            return "global"
         # 直接匹配英文域名
         for domain in DOMAINS:
             if domain in text_lower:

@@ -55,13 +55,17 @@ async def parse_intent_node(state: OrchestratorState, llm_client=None) -> dict:
         "华南": "south-china", "南部": "south-china", "south": "south-china",
         "西南": "west-china", "西部": "west-china", "west": "west-china",
     }
-    
+    global_keywords = ["全域", "所有域", "全部域", "全局", "所有地区", "全部地区", "所有故障", "全部故障"]
+
     # 提取域名
     domain = "east-china"  # 默认
-    for alias, d in domain_aliases.items():
-        if alias in user_input.lower():
-            domain = d
-            break
+    if any(kw in user_input for kw in global_keywords):
+        domain = "global"
+    else:
+        for alias, d in domain_aliases.items():
+            if alias in user_input.lower():
+                domain = d
+                break
     
     # 如果有 LLM，使用 LLM 增强解析
     if llm_client and llm_client.available:
@@ -141,16 +145,16 @@ async def validate_params_node(state: OrchestratorState) -> dict:
     """参数验证节点 — 校验必要参数"""
     intent = state["intent"]
     errors = []
-    
+
     # 检查必要字段
     if not intent.get("domain"):
         errors.append("缺少 domain 参数")
-    
-    # 域名有效性检查
-    valid_domains = ["east-china", "north-china", "south-china", "west-china"]
+
+    # 域名有效性检查（global 用于全域模板，允许通过）
+    valid_domains = ["east-china", "north-china", "south-china", "west-china", "global"]
     if intent.get("domain") not in valid_domains:
         errors.append(f"无效的 domain: {intent.get('domain')}")
-    
+
     return {
         "errors": errors,
         "messages": [f"[参数验证] {'通过' if not errors else '错误: ' + '; '.join(errors)}"],
@@ -158,61 +162,47 @@ async def validate_params_node(state: OrchestratorState) -> dict:
 
 
 async def generate_dag_node(state: OrchestratorState) -> dict:
-    """DAG 生成节点 — 生成 DAG 定义"""
-    import uuid
+    """DAG 生成节点 — 调用模板函数生成 DAG 定义"""
     import time
-    
+    from ioa_middleware.orchestrator.templates import TEMPLATES
+
     intent = state["intent"]
     template_name = state["template_name"]
     domain = intent.get("domain", "east-china")
-    
-    # 生成 DAG ID
+
     dag_id = f"dag-{template_name}-{int(time.time()*1000)}"
-    
-    # 根据模板生成节点
-    nodes = []
-    # node_id 缩短避免超过64字符限制；type/ccapability 匹配 DagNodeDef
-    if template_name == "full_remediation":
-        nodes = [
-            {"node_id": f"mon-{dag_id}", "type": "monitor", "capability": "monitor", "params": {"domain": domain}},
-            {"node_id": f"diag-{dag_id}", "type": "diagnose", "capability": "diagnose", "depends_on": [f"mon-{dag_id}"]},
-            {"node_id": f"fix-{dag_id}", "type": "repair", "capability": "repair", "depends_on": [f"diag-{dag_id}"]},
-            {"node_id": f"ver-{dag_id}", "type": "verify", "capability": "verify", "depends_on": [f"fix-{dag_id}"]},
-            {"node_id": f"rpt-{dag_id}", "type": "report", "capability": "report", "depends_on": [f"ver-{dag_id}"]},
-        ]
-    elif template_name == "monitor_only":
-        nodes = [
-            {"node_id": f"mon-{dag_id}", "type": "monitor", "capability": "monitor", "params": {"domain": domain}},
-        ]
-    elif template_name == "diagnose_only":
-        nodes = [
-            {"node_id": f"mon-{dag_id}", "type": "monitor", "capability": "monitor", "params": {"domain": domain}},
-            {"node_id": f"diag-{dag_id}", "type": "diagnose", "capability": "diagnose", "depends_on": [f"mon-{dag_id}"]},
-        ]
-    
-    DOMAIN_LABELS = {"east-china":"华东","north-china":"华北","south-china":"华南","west-china":"西南"}
-    domain_label = DOMAIN_LABELS.get(domain, domain)
-    template_labels = {
-        "full_remediation": "全流程诊断修复",
-        "monitor_only": "指标监控",
-        "diagnose_only": "故障诊断",
+
+    # 优先使用模板函数生成（避免硬编码重复逻辑）
+    template_meta = TEMPLATES.get(template_name)
+    if template_meta:
+        dag_definition = template_meta["fn"]({
+            "domain": domain,
+            "dag_id": dag_id,
+            "correlation_id": dag_id,
+        })
+    else:
+        # 未知模板：降级为单域全流程
+        dag_definition = {
+            "dag_id": dag_id,
+            "description": f"未知模板 {template_name} — {domain}",
+            "nodes": [
+                {"node_id": "monitor-1", "type": "monitor", "capability": "monitor", "params": {"domain": domain}},
+                {"node_id": "diagnose-1", "type": "diagnose", "capability": "diagnose", "depends_on": ["monitor-1"]},
+                {"node_id": "repair-1", "type": "repair", "capability": "repair", "depends_on": ["diagnose-1"]},
+                {"node_id": "verify-1", "type": "verify", "capability": "verify", "depends_on": ["repair-1"]},
+                {"node_id": "report-1", "type": "report", "capability": "report", "depends_on": ["verify-1"]},
+            ],
+        }
+
+    dag_definition["metadata"] = {
+        "template": template_name,
+        "intent": intent,
+        "generated_by": "langgraph",
     }
-    desc = template_labels.get(template_name, template_name)
-    
-    dag_definition = {
-        "dag_id": dag_id,
-        "description": f"{desc} — {domain_label}",
-        "nodes": nodes,
-        "metadata": {
-            "template": template_name,
-            "intent": intent,
-            "generated_by": "langgraph",
-        },
-    }
-    
+
     return {
         "dag_definition": dag_definition,
-        "messages": [f"[DAG 生成] 生成 DAG: {dag_id}, 包含 {len(nodes)} 个节点"],
+        "messages": [f"[DAG 生成] 模板={template_name}, 节点数={len(dag_definition.get('nodes', []))}"],
     }
 
 
