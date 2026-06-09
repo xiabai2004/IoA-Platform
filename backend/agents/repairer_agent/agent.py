@@ -140,17 +140,16 @@ class RepairerAgent(BaseAgent):
                 except Exception:
                     logger.exception("Unexpected error in post-repair fault check")
             else:
-                # ⚠️ active_faults is empty — this is suspicious because the DAG was
-                # dispatched based on detected anomalies. Either a race condition
-                # or the faults were externally cleared.
-                logger.warning(
-                    "[%s] No active faults found at repair time (dag=%s, fault_type=%s). "
-                    "This may indicate a race condition or premature fault clearing.",
-                    self.agent_id, dag_id, fault_type,
+                # No active faults for this domain — valid when running all-domain
+                # remediation on domains that happen to be healthy.
+                logger.info(
+                    "[%s] No active faults for domain=%s (dag=%s, fault_type=%s) — "
+                    "domain is healthy, repair skipped",
+                    self.agent_id, domain, dag_id, fault_type,
                 )
                 repair_result = {
-                    "status": "warning",
-                    "message": "No active faults found — repair skipped",
+                    "status": "ok",
+                    "message": f"域 {domain} 无活跃故障，跳过修复",
                     "skipped": True,
                 }
 
