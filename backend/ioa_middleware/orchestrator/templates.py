@@ -260,6 +260,20 @@ def match_template(user_input: str) -> tuple[str, dict, float]:
     if any(kw in user_lower for kw in global_keywords):
         return "full_remediation_all", TEMPLATES["full_remediation_all"], 1.0
 
+    # 阶段 1.5：模糊故障指令（未指定域 → 扫描全部域）
+    # 用户说"发生故障"/"网络异常"等，没有明确指定某个域，应全域扫描
+    vague_fault_keywords = [
+        "发生故障", "有故障", "出故障", "故障了", "网络故障",
+        "网络异常", "有异常", "出问题", "网络问题", "不正常",
+        "网络不通", "断了", "挂了", "宕机了",
+        "fault detected", "something wrong", "network down",
+    ]
+    domain_keywords = ["华东", "华北", "华南", "西南", "east", "north", "south", "west"]
+    has_vague = any(kw in user_lower for kw in vague_fault_keywords)
+    has_domain = any(kw in user_lower for kw in domain_keywords)
+    if has_vague and not has_domain:
+        return "full_remediation_all", TEMPLATES["full_remediation_all"], 1.0
+
     # 阶段 2：关键词命中率匹配
     best_name = "full_remediation"
     best_score = 0.0
