@@ -174,8 +174,8 @@ async function demoFault(){
   }
 }
 
-async function clearAllFaults(){
-  if(!confirm('确认清除所有故障？'))return;
+async function clearAllFaults(skipConfirm){
+  if(!skipConfirm && !confirm('确认清除所有故障？'))return;
   try{
     // 先查询当前活跃故障数量
     let activeCount=0;
@@ -194,10 +194,11 @@ async function clearAllFaults(){
 }
 
 async function runDemo(){
+  if(!confirm('即将执行一键演示（清除故障→注入链路拥塞→全流程诊断修复），是否继续？'))return;
   pushOp();
   toast('一键演示启动: 清除故障→注入→执行→报告','info');
   try{
-  await clearAllFaults();
+  await clearAllFaults(true);
   await new Promise(r=>setTimeout(r,800));
   $('faultType').value='link_congestion';
   $('faultDomain').value='east-china';
@@ -219,7 +220,7 @@ async function runMultiFaultDemo(){
   try{
     toast('复合故障演示: 多域同时故障→逐域修复','warning');
     log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">warning</span> 开始复合故障演示...');
-    try{await clearAllFaults();}catch(e){log('清除故障失败: '+esc(e.message));}
+    try{await clearAllFaults(true);}catch(e){log('清除故障失败: '+esc(e.message));}
     await new Promise(r=>setTimeout(r,500));
 
     // Inject all faults first
