@@ -278,8 +278,8 @@ Authorization: Bearer <pre_shared_key>
         html = (_GUI_DIR / "index.html").read_text(encoding="utf-8")
         return HTMLResponse(html)
 
-    # 静态文件（CSS、JS）
-    app.mount("/gui", StaticFiles(directory=str(_GUI_DIR)), name="gui_static")
+    # 静态文件（CSS、JS）— 挂载到 /gui/static 避免与 /gui 路由冲突
+    app.mount("/gui/static", StaticFiles(directory=str(_GUI_DIR)), name="gui_static")
 
     # WebSocket 仪表盘实时推送
     from fastapi import WebSocket, WebSocketDisconnect
