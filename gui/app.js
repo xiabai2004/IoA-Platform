@@ -75,8 +75,44 @@ async function postJSON(url,body){
 }
 
 /* ── NL / Fault ── */
+// 运维意图关键词（命中任意一个即视为有效指令）
+const _NL_KEYWORDS = [
+  // 故障与异常
+  '故障','异常','告警','报错','宕机','瘫痪','不通','断开','丢包','丢数据',
+  '拥塞','过载','超时','延迟高','延迟异常','丢包率','丢包高',
+  // 网络设备与链路
+  '网络','链路','路由','交换机','服务器','设备','节点','端口','接口','带宽','流量',
+  // 域名
+  '华东','华北','华南','西南','全域','全局','所有域','全部域',
+  // 操作动词
+  '诊断','修复','检测','监控','排查','分析','检查','处理','解决','恢复','巡检','修复',
+  '查看','检查','状态','健康','可达','连通',
+  // 攻击与安全
+  'ddos','攻击','入侵','异常流量','扫描',
+  // 资源
+  'cpu','内存','磁盘','负载','利用率',
+  // 英文关键词
+  'network','latency','loss','bandwidth','fault','error','down','outage',
+  'monitor','diagnose','repair','check','health','congestion','overload',
+];
+
+function validateNLInput(txt){
+  if(!txt || txt.trim().length < 2) return {valid:false, msg:'指令不能为空'};
+  const lower = txt.toLowerCase();
+  const matched = _NL_KEYWORDS.some(kw => lower.includes(kw));
+  if(!matched) return {valid:false, msg:'无法识别运维意图，请输入与网络运维相关的指令（如：华东延迟异常、链路拥塞诊断修复）'};
+  return {valid:true};
+}
+
 async function sendNL(){
   const txt=$('nlInput').value.trim();if(!txt)return;
+  // 意图校验
+  const check = validateNLInput(txt);
+  if(!check.valid){
+    log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">info</span> ${esc(check.msg)}`);
+    toast(check.msg,'warning');
+    return;
+  }
   pushOp();
   log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">progress_activity</span> 发送指令: ${esc(txt)}`);
   try{
