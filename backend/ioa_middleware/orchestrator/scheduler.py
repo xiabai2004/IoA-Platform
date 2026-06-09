@@ -599,6 +599,24 @@ class DagScheduler:
                 "status": "completed", "assigned_agent": node.assigned_agent,
                 "node_type": node.node_type, "node_status": "completed",
             })
+
+            # 诊断节点完成 → 立即推送诊断结果（不等 DAG 跑完）
+            if node.node_type == "diagnose" and isinstance(output, dict):
+                diag = output.get("diagnosis", {})
+                fault_type = diag.get("fault_type", "unknown")
+                domain = diag.get("domain", output.get("domain", ""))
+                confidence = diag.get("confidence", 0.0)
+                # 估算修复时间：根据模板节点数 × 平均单节点耗时
+                node_count = len(state.nodes)
+                est_sec = max(5, node_count * 3)  # 粗估 3s/节点
+                await self._notify_dashboard("diagnosis_result", {
+                    "dag_id": dag_id,
+                    "fault_type": fault_type,
+                    "domain": domain,
+                    "confidence": confidence,
+                    "estimated_sec": est_sec,
+                    "description": diag.get("description", f"{fault_type} @ {domain}"),
+                })
         elif result.get("output", {}).get("retry_signal"):
             # 验证节点返回 retry → 重置上游 diagnose+repair 节点
             # Bandit feedback: retry = partial success → reward 0.5

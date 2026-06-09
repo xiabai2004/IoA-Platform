@@ -743,6 +743,22 @@ function connectWS(){
         if(d.node_type && d.node_status){
           updateStage(d.node_type, d.node_status);
         }
+      }else if(d.type==='diagnosis_result'){
+        // 诊断完成 → 立即告知用户故障类型和预估修复时间
+        const ft=d.fault_type||'unknown';
+        const domain=d.domain||'';
+        const est=d.estimated_sec||0;
+        const conf=d.confidence||0;
+        const desc=d.description||ft;
+        const domainCn=DOMAIN_CN[domain]||domain;
+        const faultNames={'link_congestion':'链路拥塞','link_outage':'链路中断','cpu_overload':'CPU过载','ddos':'DDoS攻击','misconfig':'配置错误','device_failure':'设备故障','none':'无异常'};
+        const ftName=faultNames[ft]||ft;
+        if(ft!=='none'){
+          toast(`已识别: ${ftName} (${domainCn})，预计 ${est}s 修复完成`,'warning');
+          log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">diagnosis</span> 诊断结果: <b>${esc(ftName)}</b> @ ${esc(domainCn)} | 置信度 ${(conf*100).toFixed(0)}% | 预计 ${est}s`);
+        }else{
+          toast(`${domainCn}: 未发现异常`,'info');
+        }
       }
     }catch(err){console.warn('Dashboard WS parse error:',err);}
   };
