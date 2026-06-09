@@ -109,30 +109,35 @@ def template_full_remediation(params: dict) -> dict:
                 "capability": "monitor",
                 "domain": domain,
                 "params": {"domain": domain},
+                "max_retries": 1,
             },
             {
                 "node_id": "diagnose-1",
                 "type": "diagnose",
                 "capability": "diagnose",
                 "depends_on": ["monitor-1"],
+                "max_retries": 1,
             },
             {
                 "node_id": "repair-1",
                 "type": "repair",
                 "capability": "repair",
                 "depends_on": ["diagnose-1"],
+                "max_retries": 1,
             },
             {
                 "node_id": "verify-1",
                 "type": "verify",
                 "capability": "verify",
                 "depends_on": ["repair-1"],
+                "max_retries": 1,
             },
             {
                 "node_id": "report-1",
                 "type": "report",
                 "capability": "report",
                 "depends_on": ["verify-1"],
+                "max_retries": 1,
             },
         ],
     }
@@ -198,6 +203,7 @@ def template_full_remediation_all(params: dict) -> dict:
                 "capability": "monitor",
                 "domain": domain,
                 "params": {"domain": domain},
+                "max_retries": 1,
             },
             {
                 "node_id": diag_id,
@@ -205,6 +211,7 @@ def template_full_remediation_all(params: dict) -> dict:
                 "capability": "diagnose",
                 "domain": domain,
                 "depends_on": [mon_id],
+                "max_retries": 1,
             },
             {
                 "node_id": repair_id,
@@ -212,6 +219,7 @@ def template_full_remediation_all(params: dict) -> dict:
                 "capability": "repair",
                 "domain": domain,
                 "depends_on": [diag_id],
+                "max_retries": 1,
             },
             {
                 "node_id": verify_id,
@@ -219,6 +227,7 @@ def template_full_remediation_all(params: dict) -> dict:
                 "capability": "verify",
                 "domain": domain,
                 "depends_on": [repair_id],
+                "max_retries": 1,
             },
         ])
         report_deps.append(verify_id)
@@ -228,6 +237,7 @@ def template_full_remediation_all(params: dict) -> dict:
         "type": "report",
         "capability": "report",
         "depends_on": report_deps,
+        "max_retries": 1,
     })
 
     return {

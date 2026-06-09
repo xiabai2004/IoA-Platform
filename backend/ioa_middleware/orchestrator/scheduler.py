@@ -38,7 +38,7 @@ from constants import TIMING, DIAG, CACHE
 logger = logging.getLogger("orchestrator.scheduler")
 
 # 调度器轮询间隔
-SCHEDULE_INTERVAL_SEC = 1.0
+SCHEDULE_INTERVAL_SEC = 0.3
 # 调度器 agent_id
 ORCHESTRATOR_AGENT_ID = "orchestrator"
 
@@ -473,7 +473,7 @@ class DagScheduler:
                             dispatch_attempt + 1, node.max_retries + 2,
                             node.node_id, last_error,
                         )
-                        await asyncio.sleep(0.5 * (dispatch_attempt + 1))
+                        await asyncio.sleep(0.2 * (dispatch_attempt + 1))
                     else:
                         raise  # Re-raise for the outer except
 

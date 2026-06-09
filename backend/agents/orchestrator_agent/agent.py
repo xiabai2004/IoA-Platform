@@ -11,6 +11,7 @@
 
 import json
 import re
+import time
 import httpx
 from agents.base_agent import BaseAgent
 from agents.tool_client import HttpToolClient
@@ -49,8 +50,42 @@ class OrchestratorAgent(BaseAgent):
         psk = (config or {}).get("auth", {}).get("pre_shared_key", "")
         self._auth = {"Authorization": f"Bearer {psk}"} if psk else {}
         self._dag_http = httpx.AsyncClient(timeout=30.0)
+        # 故障场景缓存：相同输入 → 快速返回上次结果
+        self._scenario_cache: dict[str, dict] = {}
+        self._CACHE_TTL_SEC = 600  # 10 分钟缓存有效期
 
     # ── 消息处理 ──────────────────────────────────────
+
+    def _cache_key(self, user_input: str) -> str:
+        """生成缓存键：归一化输入（去空格、小写、截断）。"""
+        return user_input.strip().lower()[:100]
+
+    def _lookup_cache(self, user_input: str) -> dict | None:
+        """查找场景缓存，过期返回 None。"""
+        key = self._cache_key(user_input)
+        entry = self._scenario_cache.get(key)
+        if entry is None:
+            return None
+        if time.time() - entry.get("cached_at", 0) > self._CACHE_TTL_SEC:
+            del self._scenario_cache[key]
+            return None
+        return entry
+
+    def _store_cache(self, user_input: str, dag_id: str, template_name: str,
+                     diagnosis_summary: str, elapsed_ms: int) -> None:
+        """缓存已完成的场景结果。"""
+        key = self._cache_key(user_input)
+        self._scenario_cache[key] = {
+            "dag_id": dag_id,
+            "template": template_name,
+            "diagnosis": diagnosis_summary,
+            "elapsed_ms": elapsed_ms,
+            "cached_at": time.time(),
+        }
+        # 限制缓存大小
+        if len(self._scenario_cache) > 64:
+            oldest = min(self._scenario_cache, key=lambda k: self._scenario_cache[k]["cached_at"])
+            del self._scenario_cache[oldest]
 
     async def handle_message(self, topic: str, message: dict) -> dict:
         """处理 task / user 消息：解析 NL → 提交 DAG → 返回 dag_id。"""
@@ -76,6 +111,30 @@ class OrchestratorAgent(BaseAgent):
             return {"success": False, "error": "no_user_input"}
 
         print(f"[{self.agent_id}] Processing: {user_input[:80]}...")
+
+        # ── 场景缓存：相同指令秒级响应 ──
+        cached = self._lookup_cache(user_input)
+        if cached:
+            cached_at_ago = int(time.time() - cached["cached_at"])
+            print(f"[{self.agent_id}] Cache hit for: {user_input[:40]}... "
+                  f"(cached {cached_at_ago}s ago, dag={cached['dag_id']})")
+            return {
+                "success": True,
+                "output": {
+                    "dag_id": cached["dag_id"],
+                    "template": cached["template"],
+                    "user_input": user_input,
+                    "cached": True,
+                    "diagnosis": cached["diagnosis"],
+                    "elapsed_ms": cached["elapsed_ms"],
+                    "message": (
+                        f"[缓存命中] 相同场景 {cached_at_ago}s 前已处理完毕。"
+                        f"诊断: {cached['diagnosis']}。"
+                        f"上次耗时: {cached['elapsed_ms']/1000:.1f}s。"
+                        f"正在提交新的修复流程..."
+                    ),
+                },
+            }
 
         # 使用 LangGraph 工作流（优先）或降级为传统方法
         try:
@@ -120,6 +179,12 @@ class OrchestratorAgent(BaseAgent):
             result_data = resp.json()
             dag_id = result_data.get("dag_id", dag_def.get("dag_id", ""))
 
+            # 生成诊断摘要（用于缓存快速响应）
+            domain = dag_params.get("domain", "east-china")
+            diagnosis_summary = f"{template_name} @ {domain}"
+            if dag_params.get("fault_type") and dag_params["fault_type"] != "unknown":
+                diagnosis_summary = f"{dag_params['fault_type']} @ {domain}"
+
             result = {
                 "success": True,
                 "output": {
@@ -130,6 +195,8 @@ class OrchestratorAgent(BaseAgent):
                     "message": f"DAG {dag_id} 已提交（模板: {template_name}），正在执行中...",
                 },
             }
+            # 缓存场景结果（下次相同指令秒级响应）
+            self._store_cache(user_input, dag_id, template_name, diagnosis_summary, 0)
             print(f"[{self.agent_id}] DAG {dag_id} submitted ({template_name})")
         except Exception as e:
             result = {
