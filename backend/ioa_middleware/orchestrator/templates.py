@@ -173,8 +173,9 @@ def template_health_check(params: dict) -> dict:
 @_register(
     "full_remediation_all",
     "全 4 域故障修复（监控 → 诊断 → 修复 → 验证 → 报告 × 4 域）",
-    ["全域", "所有域", "全部域", "全局修复", "所有地区", "全部地区",
-     "所有故障", "全部故障", "all domains", "all regions", "global fix"],
+    ["全域", "所有域", "全部域", "全局", "所有地区", "全部地区",
+     "所有故障", "全部故障", "所有网络", "全部网络",
+     "all domains", "all regions", "global fix", "global remediation"],
 )
 def template_full_remediation_all(params: dict) -> dict:
     """全 4 域完整闭环：每域独立 monitor → diagnose → repair → verify，最终汇总报告。"""
@@ -243,11 +244,23 @@ def match_template(user_input: str) -> tuple[str, dict, float]:
     """根据自然语言输入匹配最佳模板。
 
     返回 (template_name, template_meta, score)。
-    score 基于关键词命中率。
 
-    无匹配时返回 ("full_remediation", ..., 0.0) 作为默认。
+    两阶段匹配：
+    1. 检测全域意图关键词 → 命中则直接选 full_remediation_all
+    2. 否则按关键词命中率选择最佳模板，默认 full_remediation
     """
     user_lower = user_input.lower()
+
+    # 阶段 1：全域意图检测（命中任意一个即认定为全域操作）
+    global_keywords = [
+        "全域", "所有域", "全部域", "全局", "所有地区", "全部地区",
+        "所有故障", "全部故障", "所有网络", "全部网络",
+        "all domains", "all regions", "global",
+    ]
+    if any(kw in user_lower for kw in global_keywords):
+        return "full_remediation_all", TEMPLATES["full_remediation_all"], 1.0
+
+    # 阶段 2：关键词命中率匹配
     best_name = "full_remediation"
     best_score = 0.0
 
