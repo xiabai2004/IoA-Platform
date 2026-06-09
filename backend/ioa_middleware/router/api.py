@@ -56,7 +56,7 @@ async def _persist_message(msg: dict) -> None:
     intent = msg.get("intent", {})
     payload = msg.get("payload", {})
     await execute(
-        """INSERT INTO messages
+        """INSERT OR REPLACE INTO messages
            (msg_id, from_agent, to_agent, intent_type, intent_desc, priority,
             payload, correlation_id, route_decision, status, ts_ms)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",

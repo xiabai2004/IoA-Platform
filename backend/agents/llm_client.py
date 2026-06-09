@@ -60,6 +60,8 @@ class LLMClient:
                     base_url=self._base_url,
                     temperature=0.1,
                     max_tokens=1024,
+                    request_timeout=15,
+                    max_retries=1,
                 )
                 logger.info("LLM client initialized: provider=%s model=%s", provider, self._model)
             except Exception as e:

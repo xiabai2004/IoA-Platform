@@ -457,6 +457,9 @@ class DagScheduler:
             last_error = ""
             for dispatch_attempt in range(node.max_retries + 2):  # +2 because 0-based + 1 extra
                 try:
+                    # 每次重试生成新 msg_id，避免 UNIQUE constraint 冲突
+                    task_msg["msg_id"] = str(uuid.uuid4())
+                    task_msg["ts_ms"] = int(time.time() * 1000)
                     resp = await self._http.post(
                         f"{self._middleware_base}/messages",
                         json=task_msg,

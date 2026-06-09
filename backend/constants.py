@@ -21,7 +21,7 @@ class _TimingConstants:
     HTTP_CLIENT_TIMEOUT: float = 30.0        # 默认 HTTP 客户端超时
     DASHBOARD_WS_TIMEOUT: float = 30.0       # Dashboard WS 读超时
     SIMULATOR_PUSH_INTERVAL: float = 1.0     # Simulator WS 推送间隔
-    LLM_REQUEST_TIMEOUT: float = 60.0        # LLM API 请求超时
+    LLM_REQUEST_TIMEOUT: float = 15.0        # LLM API 请求超时（降级越快体验越好）
     PROBE_TIMEOUT: float = 2.0               # 路由器探测超时
 
 
