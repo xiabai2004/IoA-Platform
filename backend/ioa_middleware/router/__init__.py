@@ -37,6 +37,7 @@ class SmartRouter:
         self._router: object | None = None
         self._router_type: str | None = None
         self._initialized = False
+        self._last_decision: dict | None = None
 
     # ── 引擎探测（同步，首次调用时执行）──────────────────
 
@@ -155,12 +156,26 @@ class SmartRouter:
 
         # EmbeddingRouter.select() 是同步的 → asyncio.to_thread 避免阻塞
         if self._router_type == "embedding":
-            return await asyncio.to_thread(
+            result = await asyncio.to_thread(
                 self._router.select, candidates, capability, domain, task_desc
             )
+        else:
+            # WeightedRouter (LLM / keyword) 的 select() 都是异步的
+            result = await self._router.select(candidates, capability, domain, task_desc)
 
-        # WeightedRouter (LLM / keyword) 的 select() 都是异步的
-        return await self._router.select(candidates, capability, domain, task_desc)
+        # 捕获底层引擎的路由决策
+        if result is not None:
+            inner = getattr(self._router, "_last_decision", None)
+            self._last_decision = {
+                "engine": self._router_type,
+                **(inner or {}),
+            }
+        return result
+
+    @property
+    def last_decision(self) -> dict | None:
+        """返回最近一次 select() 的路由决策元数据。"""
+        return self._last_decision
 
 
 # ── 导出 ──────────────────────────────────────────────────
@@ -169,22 +184,4 @@ __all__ = [
     "router",                # FastAPI APIRouter（消息总线 REST/WS）
     "ws_endpoint",           # WebSocket 端点函数
     "SmartRouter",           # 智能路由器（并行探测 + 超时保护）
-    "WeightedRouter",        # 多维加权路由（LLM 增强）
-    "EmbeddingRouter",       # Embedding 语义路由
-    "BanditScorer",          # UCB1 多臂老虎机（在线学习路由权重）
-    "CrossEncoderReranker",  # Cross-Encoder 精排器
 ]
-
-
-def WeightedRouter():
-    """延迟导入 WeightedRouter，避免循环依赖。"""
-    from ioa_middleware.router.weighted_router import WeightedRouter as WR
-
-    return WR()
-
-
-def EmbeddingRouter():
-    """延迟导入 EmbeddingRouter，避免循环依赖。"""
-    from ioa_middleware.router.embedding_router import EmbeddingRouter as ER
-
-    return ER()

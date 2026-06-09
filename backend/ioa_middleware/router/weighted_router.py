@@ -62,6 +62,7 @@ class WeightedRouter:
     def __init__(self, llm_client=None):
         self._llm = llm_client
         self._cache = SemanticCache(maxsize=128)
+        self._last_decision: dict | None = None
 
     # ── lazy LLM client ──────────────────────────────────
 
@@ -143,15 +144,29 @@ class WeightedRouter:
         scored.sort(key=lambda x: x[0], reverse=True)
         best_score, best_agent = scored[0]
 
-        log_suffix = f" (semantic=llm)" if (task_desc and self._llm_client and self._llm_client.available) else \
-                     f" (semantic=keywords)"
+        semantic_mode = "llm" if (task_desc and self._llm_client and self._llm_client.available) else "keywords"
         logger.info(
-            "SemanticRouter: selected %s (score=%.3f, domain=%s, load=%.2f)%s "
+            "SemanticRouter: selected %s (score=%.3f, domain=%s, load=%.2f) (semantic=%s) "
             "from %d candidates for cap=%s",
             best_agent.get("agent_id"), best_score,
             best_agent.get("domain"), best_agent.get("load", 0),
-            log_suffix, len(filtered), capability,
+            semantic_mode, len(filtered), capability,
         )
+
+        # 记录路由决策（供调用方持久化）
+        self._last_decision = {
+            "engine": "weighted",
+            "semantic_mode": semantic_mode,
+            "capability": capability,
+            "domain": domain,
+            "selected_agent": best_agent.get("agent_id"),
+            "selected_score": round(best_score, 4),
+            "candidates_count": len(filtered),
+            "candidates": [
+                {"agent_id": a.get("agent_id"), "score": round(s, 4), "domain": a.get("domain")}
+                for s, a in scored[:5]  # 只保留 top 5
+            ],
+        }
         return best_agent
 
     # ── 同步评分（不含语义）────────────────────────────────

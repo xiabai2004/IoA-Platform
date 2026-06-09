@@ -69,7 +69,7 @@ async def _persist_message(msg: dict) -> None:
             intent.get("priority", "normal"),
             json.dumps(payload),
             msg.get("correlation_id"),
-            None,  # route_decision — Phase 3 语义路由后填充
+            json.dumps(msg.get("route_decision")) if msg.get("route_decision") else None,
             "delivered",
             msg.get("ts_ms", int(time.time() * 1000)),
         ),

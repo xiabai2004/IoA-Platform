@@ -414,6 +414,9 @@ class DagScheduler:
                 "SemanticRouter: no suitable agent for node %s", node.node_id)
             return
 
+        # 捕获路由决策（用于消息持久化）
+        route_decision = self._router.last_decision
+
         # 4. 分配节点
         node.assigned_agent = agent["agent_id"]
         node.status = NodeStatus.assigned
@@ -442,6 +445,7 @@ class DagScheduler:
                 "capability": node.capability,
                 "params": merged_params,
             },
+            "route_decision": route_decision,
             "correlation_id": correlation_id,
             "ts_ms": int(time.time() * 1000),
         }
