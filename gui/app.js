@@ -130,36 +130,37 @@ async function sendNL(){
     toast('指令已发送','success');
     $('nlInput').value='';
 
-    // 轮询等待新 DAG 出现（最多 60s）
+    // 轮询等待新 DAG 出现并完成（最多 60s）
     let foundDag=null;
+    let dagFoundAt=0;
     for(let i=0;i<60;i++){
-      const remain=60-i;
-      log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">progress_activity</span> 等待 orchestrator 处理... <span style="color:var(--muted)">(剩余 ${remain}s)</span>`);
       await new Promise(r=>setTimeout(r,1000));
-      await loadDags();
-      // 只匹配新出现的 DAG
+      try{await loadDags();}catch(e){console.warn('loadDags poll error:',e);}
       const allDags=Object.values(dagData).sort((a,b)=>(b.submitted_at_ms||0)-(a.submitted_at_ms||0));
       const newDag=allDags.find(d=>d.dag_id&&!beforeDagIds.has(d.dag_id));
       if(newDag){
-        foundDag=newDag.dag_id;
+        if(!foundDag){foundDag=newDag.dag_id;dagFoundAt=i;}
         const st=newDag.status;
+        const elapsed=i-dagFoundAt;
         if(st==='completed'){
-          log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--green)">check_circle</span> DAG <b>${esc(foundDag)}</b> 已完成！`);
-          toast(`DAG ${foundDag} 执行完成`,'success');
+          log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--green)">check_circle</span> DAG <b>${esc(foundDag)}</b> 已完成！(${elapsed}s)`);
+          toast(`DAG 执行完成 (${elapsed}s)`,'success');
           expandedDags[foundDag]=true;
           renderDags(Object.values(dagData).map(d=>({dag_id:d.dag_id,status:d.status,definition:d.definition,description:d.description,submitted_at_ms:d.submitted_at_ms,finished_at_ms:d.finished_at_ms})));
           break;
         }else if(st==='failed'){
           log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--red)">error</span> DAG <b>${esc(foundDag)}</b> 失败`);
-          toast(`DAG ${foundDag} 失败`,'error');
+          toast(`DAG 执行失败`,'error');
           break;
-        }else if(st==='running'||st==='pending'){
-          log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">schedule</span> DAG <b>${esc(foundDag)}</b> 执行中 (${st})...`);
         }
+        if(i%3===0) log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">schedule</span> DAG 执行中... (${elapsed}s)`);
+      }else if(i%5===0){
+        log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--muted)">hourglass_empty</span> 等待 orchestrator 创建 DAG... (${i}s)`);
       }
     }
     if(!foundDag){
-      log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--muted)">info</span> 指令已投递（未检测到新 DAG，可能 orchestrator 处理较慢）`);
+      log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--muted)">info</span> 指令已投递，orchestrator 处理中（可在 DAG 记录面板查看进度）`);
+      toast('指令已投递，请查看 DAG 记录面板','info');
     }
   }catch(e){
     const errMsg=friendlyError(e);
