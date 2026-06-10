@@ -161,27 +161,6 @@ async function sendNL(){
     if(!foundDag){
       log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--muted)">info</span> 指令已投递（未检测到新 DAG，可能 orchestrator 处理较慢）`);
     }
-    }
-
-    if(foundDag){
-      const d=dagData[foundDag];
-      const st=d?d.status:'unknown';
-      if(st==='completed'){
-        log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--green)">check_circle</span> DAG <b>${esc(foundDag)}</b> 已完成！点击查看详情`);
-        toast(`DAG ${foundDag} 执行完成`,'success');
-        // 自动展开这个 DAG
-        expandedDags[foundDag]=true;
-        renderDags(Object.values(dagData).map(d=>({dag_id:d.dag_id,status:d.status,definition:d.definition,description:d.description,submitted_at_ms:d.submitted_at_ms,finished_at_ms:d.finished_at_ms})));
-      }else if(st==='running'||st==='pending'){
-        log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">schedule</span> DAG <b>${esc(foundDag)}</b> 执行中 (${st})...`);
-        toast(`DAG ${foundDag} 执行中`,'warning');
-        expandedDags[foundDag]=true;
-      }else{
-        log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--red)">error</span> DAG <b>${esc(foundDag)}</b> 状态: ${st}`);
-      }
-    }else{
-      log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--muted)">info</span> 指令已投递（未检测到新 DAG，orchestrator 可能直接处理）`);
-    }
   }catch(e){
     const errMsg=friendlyError(e);
     log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--red)">cancel</span> ${esc(errMsg)}`);
