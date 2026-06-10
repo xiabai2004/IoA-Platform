@@ -258,9 +258,13 @@ Authorization: Bearer <pre_shared_key>
         from ioa_middleware.registry import store
         try:
             agents = await store.list_agents(status="active")
+            auth_enabled = os.environ.get("IOA_AUTH_ENABLED", "true").lower() != "false"
+            deepseek_key = config.get("llm", {}).get("deepseek", {}).get("api_key", "")
             return {
                 "status": "ok",
                 "agents_count": len(agents),
+                "auth_enabled": auth_enabled,
+                "llm_available": bool(deepseek_key),
                 "timestamp": int(__import__('time').time() * 1000),
             }
         except Exception as e:

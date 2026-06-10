@@ -58,17 +58,27 @@ async def main():
     logger.info("  C4 B-EP1 智能体互联网创新攻关")
     logger.info("=" * 60)
 
-    # 安全检查（认证已关闭时跳过）
+    # 安全检查
     auth_enabled = os.environ.get("IOA_AUTH_ENABLED", "true").lower() != "false"
     if auth_enabled:
         from ioa_middleware.auth import _get_psk_unsafe
         try:
             _get_psk_unsafe(config)
-            logger.info("PSK validated successfully.")
+            logger.info("Auth: ENABLED — PSK validated")
         except RuntimeError as e:
-            logger.warning("PSK check failed: %s", e)
+            logger.warning("Auth: ENABLED but PSK check failed: %s", e)
     else:
-        logger.info("Auth disabled (IOA_AUTH_ENABLED=false)")
+        logger.warning("=" * 60)
+        logger.warning("  Auth: DISABLED — 所有 API 端点对外开放")
+        logger.warning("  生产环境请设置 IOA_AUTH_ENABLED=true")
+        logger.warning("=" * 60)
+    
+    # 检查 DeepSeek API Key
+    deepseek_key = config.get("llm", {}).get("deepseek", {}).get("api_key", "")
+    if not deepseek_key:
+        logger.warning("LLM: DeepSeek API key NOT configured — LLM features will be disabled")
+    else:
+        logger.info("LLM: DeepSeek API key configured (%s...)", deepseek_key[:8])
 
     # 1. 启动模拟器（独立端口，仅本地访问）
     sim_port = config["simulator"]["port"]

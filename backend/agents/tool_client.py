@@ -97,6 +97,8 @@ class McpToolClient(ToolClient):
 
     使用 MCP 协议（Model Context Protocol）调用工具。
     MCP 是 Anthropic 提出的标准工具调用协议。
+    
+    传输层：使用 SSE transport 与服务端 SseServerTransport 匹配。
     """
 
     def __init__(self, mcp_server_url: str = "http://127.0.0.1:8000/mcp"):
@@ -110,27 +112,32 @@ class McpToolClient(ToolClient):
         return "mcp"
 
     async def _ensure_session(self):
-        """确保 MCP 会话已建立。"""
+        """确保 MCP 会话已建立（SSE transport）。
+
+        MCP Server 挂载在 /mcp 下，SSE handler 在 /mcp/sse。
+        sse_client 需要指向 SSE endpoint URL。
+        """
         if self._session is not None:
             return
 
         try:
             from mcp import ClientSession
-            from mcp.client.streamable_http import streamablehttp_client
+            from mcp.client.sse import sse_client
 
-            # 建立 MCP 连接
-            transport = await streamablehttp_client(self._server_url).__aenter__()
-            read_stream, write_stream, _ = transport
+            # sse_client 连接 SSE endpoint（服务端 SseServerTransport 的 /sse 路由）
+            sse_url = self._server_url.rstrip("/") + "/sse"
+            self._sse_ctx = sse_client(sse_url)
+            read_stream, write_stream = await self._sse_ctx.__aenter__()
             self._session = await ClientSession(read_stream, write_stream).__aenter__()
             await self._session.initialize()
 
             # 缓存工具列表
             tools_result = await self._session.list_tools()
             self._tools_cache = {t.name: t for t in tools_result.tools}
-            logger.info("MCP session established, %d tools available", len(self._tools_cache))
+            logger.info("MCP session established (SSE transport, %d tools)", len(self._tools_cache))
 
         except Exception as e:
-            logger.warning("Failed to establish MCP session: %s", e)
+            logger.warning("Failed to establish MCP session (SSE): %s", e)
             self._session = None
 
     async def call_tool(self, name: str, params: dict) -> dict:
@@ -157,12 +164,19 @@ class McpToolClient(ToolClient):
             raise
 
     async def close(self):
-        """关闭 MCP 会话。"""
+        """关闭 MCP 会话（SSE transport）。"""
         if self._session:
             try:
                 await self._session.__aexit__(None, None, None)
             except (ConnectionError, OSError, RuntimeError) as exc:
                 logger.debug("Error closing MCP session: %s", exc)
+            self._session = None
+        if hasattr(self, '_sse_ctx') and self._sse_ctx:
+            try:
+                await self._sse_ctx.__aexit__(None, None, None)
+            except (ConnectionError, OSError, RuntimeError) as exc:
+                logger.debug("Error closing SSE transport: %s", exc)
+            self._sse_ctx = None
         await self._http.aclose()
 
 

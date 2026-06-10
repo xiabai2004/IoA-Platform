@@ -182,27 +182,32 @@ async def main():
 
 def create_mcp_sse_app(sim_url: str = "http://127.0.0.1:8001"):
     """创建 MCP SSE 传输层的 ASGI 应用（供 FastAPI 挂载）。
-    
-    解决 transport 不匹配：McpToolClient 使用 streamable HTTP，
-    MCP Server 改用 SSE transport 替代 stdio，使 client/server 可通信。
+
+    使用 SSE transport 替代 stdio，使得可通过 HTTP/SSE 连接 MCP Server。
+    客户端使用 mcp.client.sse.sse_client 连接，与服务端 SseServerTransport 配对。
     """
     from mcp.server.sse import SseServerTransport
     from starlette.applications import Starlette
-    from starlette.routing import Route, Mount
+    from starlette.routing import Route
+    from starlette.requests import Request
+    import asyncio as _asyncio
 
     mcp_server = create_mcp_server(sim_url)
-    sse_transport = SseServerTransport("/messages")
+    sse_transport = SseServerTransport("/mcp/messages")
 
-    async def handle_sse(request):
+    async def handle_sse(request: Request):
         async with sse_transport.connect_sse(
             request.scope, request.receive, request._send
-        ) as streams:
+        ) as (read_stream, write_stream):
             await mcp_server.run(
-                streams[0], streams[1], mcp_server.create_initialization_options()
+                read_stream, write_stream,
+                mcp_server.create_initialization_options(),
             )
 
-    async def handle_messages(request):
-        await sse_transport.handle_post_message(request.scope, request.receive, request._send)
+    async def handle_messages(request: Request):
+        await sse_transport.handle_post_message(
+            request.scope, request.receive, request._send
+        )
 
     app = Starlette(routes=[
         Route("/sse", endpoint=handle_sse),

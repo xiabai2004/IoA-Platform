@@ -749,7 +749,25 @@ function debouncedLoadDags(){
   _dagLoadTimer=setTimeout(loadDags,300);
 }
 
+// WS 连接状态机: 'connected' | 'reconnecting' | 'disconnected'
+let _wsState='disconnected';
 let _wsReconnDelay=3000;
+let _lastToastMsg='';   // toast 去重
+
+function _wsToast(msg,type){
+  // 防止相同消息重复弹出
+  if(msg===_lastToastMsg) return;
+  _lastToastMsg=msg;
+  toast(msg,type);
+}
+
+async function _reloadDataOnReconnect(){
+  // 重连成功后补拉数据
+  try{await loadAgents();}catch(e){console.warn('reconnect loadAgents:',e);}
+  try{await loadDags();}catch(e){console.warn('reconnect loadDags:',e);}
+  try{await loadMessages();}catch(e){console.warn('reconnect loadMessages:',e);}
+}
+
 function connectWS(){
   const wsUrl=`${API.replace('http','ws')}/ws/dashboard?token=${AUTH_TOKEN}`;
   const ws=new WebSocket(wsUrl);
@@ -757,7 +775,15 @@ function connectWS(){
     $('wsDot').className='ok';
     $('wsLabel').textContent='控制';
     _wsReconnDelay=3000;
-    toast('WebSocket 已连接','success');
+    if(_wsState==='disconnected'){
+      _wsToast('WebSocket 已连接','success');
+    }else if(_wsState==='reconnecting'){
+      _wsToast(`WS 重连成功 (等待${(_wsReconnDelay/1000).toFixed(0)}s)`,'success');
+      // 重连成功后补拉期间丢失的数据
+      _reloadDataOnReconnect();
+    }
+    _wsState='connected';
+    _lastToastMsg='';  // reset
   };
   ws.onmessage=(e)=>{
     try{
@@ -802,8 +828,14 @@ function connectWS(){
   };
   ws.onclose=()=>{
     $('wsDot').className='off';
-    $('wsLabel').textContent='重连中...';
-    toast('WebSocket 断开，正在重连...','warning');
+    const wasConnected=_wsState==='connected';
+    _wsState='reconnecting';
+    const delaySec=(_wsReconnDelay/1000).toFixed(0);
+    $('wsLabel').textContent=`重连中(${delaySec}s)`;
+    // 只在首次断开时弹 toast，高频断开不重复
+    if(wasConnected){
+      _wsToast('WebSocket 断开，自动重连中...','warning');
+    }
     setTimeout(connectWS,_wsReconnDelay);
     _wsReconnDelay=Math.min(_wsReconnDelay*2,30000); // 指数退避，上限30s
   };
@@ -811,6 +843,7 @@ function connectWS(){
 }
 
 /* ── Simulator WS ── */
+let _simState='disconnected';
 let _simReconnDelay=3000;
 function connectSimWS(){
   const ws=new WebSocket(`${API.replace('http','ws').replace(/:\d+$/,':8001')}/simulator/ws`);
@@ -819,6 +852,9 @@ function connectSimWS(){
     $('simDot').className='ok';
     $('simLabel').textContent='模拟器';
     _simReconnDelay=3000;
+    _simState='connected';
+    // 重连后立即补拉一次拓扑数据
+    refreshTopoFromSimulator();
     startTopoRefreshLoop();
   };
   ws.onmessage=(e)=>{
@@ -834,7 +870,9 @@ function connectSimWS(){
   };
   ws.onclose=()=>{
     $('simDot').className='off';
-    $('simLabel').textContent='重连中...';
+    _simState='reconnecting';
+    const delaySec=(_simReconnDelay/1000).toFixed(0);
+    $('simLabel').textContent=`重连中(${delaySec}s)`;
     setTimeout(connectSimWS,_simReconnDelay);
     _simReconnDelay=Math.min(_simReconnDelay*2,30000);
   };
