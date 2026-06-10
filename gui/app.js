@@ -233,17 +233,64 @@ async function runDemo(){
   if(!confirm('即将执行一键演示（清除故障→注入链路拥塞→全流程诊断修复），是否继续？'))return;
   pushOp();
   toast('一键演示启动: 清除故障→注入→执行→报告','info');
+  log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">play_circle</span> 一键演示开始...');
   try{
-  await clearAllFaults(true);
-  await new Promise(r=>setTimeout(r,800));
-  $('faultType').value='link_congestion';
-  $('faultDomain').value='east-china';
-  await demoFault();
-  await new Promise(r=>setTimeout(r,1000));
-  $('nlInput').value='华东地区网络延迟异常，请全流程诊断修复';
-  await sendNL();
+    // 1. 清除旧故障
+    await clearAllFaults(true);
+    await new Promise(r=>setTimeout(r,500));
+
+    // 2. 注入故障
+    $('faultType').value='link_congestion';
+    $('faultDomain').value='east-china';
+    await demoFault();
+    await new Promise(r=>setTimeout(r,500));
+
+    // 3. 发送指令并等待 DAG
+    log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">schedule</span> 正在提交修复流程...');
+    const txt='华东地区网络延迟异常，请全流程诊断修复';
+    const msgId='demo-'+Date.now();
+    const r=await postJSON(`${API}/messages`,{
+      msg_id:msgId,from_agent:'gui',to_agent:'orchestrator-agent',
+      intent:{type:'user',description:txt,priority:'high'},
+      payload:{params:{message:txt}},correlation_id:'gui-'+msgId,ts_ms:Date.now()
+    });
+    if(!r.ok)throw Error('HTTP '+r.status);
+    toast('指令已提交，等待 orchestrator 处理...','success');
+
+    // 4. 轮询等待 DAG 完成（最多 90s）
+    let foundDag=null;
+    for(let i=0;i<90;i++){
+      await new Promise(r=>setTimeout(r,1000));
+      await loadDags();
+      // 找最新的 full_remediation DAG
+      const allDags=Object.values(dagData).sort((a,b)=>(b.submitted_at_ms||0)-(a.submitted_at_ms||0));
+      const demoDag=allDags.find(d=>d.dag_id&&d.dag_id.includes('full_remediation'));
+      if(demoDag){
+        if(!foundDag) foundDag=demoDag.dag_id;
+        const st=demoDag.status;
+        const nodes=demoDag.nodes||[];
+        const done=nodes.filter(n=>n.status==='completed').length;
+        log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">progress_activity</span> DAG ${st} (${done}/${nodes.length}) ${i+1}s`);
+        if(st==='completed'||st==='failed'){
+          // 展开 DAG
+          expandedDags[foundDag]=true;
+          renderDags(Object.values(dagData).map(d=>({dag_id:d.dag_id,status:d.status,definition:d.definition,description:d.description,submitted_at_ms:d.submitted_at_ms,finished_at_ms:d.finished_at_ms})));
+          if(st==='completed'){
+            toast('一键演示完成！故障已修复','success');
+            log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--green)">check_circle</span> 演示完成，故障已自动修复');
+          }else{
+            toast('DAG 执行失败','error');
+          }
+          break;
+        }
+      }
+    }
+    if(!foundDag){
+      log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--muted)">info</span> 指令已投递（未检测到 DAG）');
+    }
   }catch(e){
     toast('演示执行失败: '+e.message,'error');
+    log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--red)">cancel</span> 演示失败: '+esc(e.message));
   }finally{
     popOp();
   }
