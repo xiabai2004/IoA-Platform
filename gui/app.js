@@ -116,9 +116,9 @@ async function sendNL(){
   pushOp();
   log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">progress_activity</span> 发送指令: ${esc(txt)}`);
   try{
-    // 记录当前 DAG 数量
-    const beforeDags=Object.keys(dagData).length;
-    const beforeDagsSet=new Set(Object.keys(dagData));
+    // 记录指令发送前的 DAG ID 集合
+    await loadDags();
+    const beforeDagIds=new Set(Object.keys(dagData));
     const msgId='nl-'+Date.now();
     const r=await postJSON(`${API}/messages`,{
       msg_id:msgId,from_agent:'gui',to_agent:'orchestrator-agent',
@@ -130,30 +130,37 @@ async function sendNL(){
     toast('指令已发送','success');
     $('nlInput').value='';
 
-    // 轮询等待新 DAG 出现（最多 30 秒，orchestrator 含 LLM 解析可能较慢）
+    // 轮询等待新 DAG 出现（最多 60s）
     let foundDag=null;
-    for(let i=0;i<30;i++){
-      const remain=30-i;
+    for(let i=0;i<60;i++){
+      const remain=60-i;
       log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">progress_activity</span> 等待 orchestrator 处理... <span style="color:var(--muted)">(剩余 ${remain}s)</span>`);
       await new Promise(r=>setTimeout(r,1000));
       await loadDags();
-      const dags=Object.keys(dagData);
-      if(dags.length>beforeDags){
-        // 找到最新的 DAG
-        const newDag=dags.find(id=>!beforeDagsSet.has(id));
-        foundDag=newDag||dags[dags.length-1];
-        break;
-      }
-      // 检查是否有 DAG 变成 completed
-      for(const id of dags){
-        const d=dagData[id];
-        if(d&&d.status==='completed'&&!d._notified){
-          d._notified=true;
-          foundDag=id;
+      // 只匹配新出现的 DAG
+      const allDags=Object.values(dagData).sort((a,b)=>(b.submitted_at_ms||0)-(a.submitted_at_ms||0));
+      const newDag=allDags.find(d=>d.dag_id&&!beforeDagIds.has(d.dag_id));
+      if(newDag){
+        foundDag=newDag.dag_id;
+        const st=newDag.status;
+        if(st==='completed'){
+          log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--green)">check_circle</span> DAG <b>${esc(foundDag)}</b> 已完成！`);
+          toast(`DAG ${foundDag} 执行完成`,'success');
+          expandedDags[foundDag]=true;
+          renderDags(Object.values(dagData).map(d=>({dag_id:d.dag_id,status:d.status,definition:d.definition,description:d.description,submitted_at_ms:d.submitted_at_ms,finished_at_ms:d.finished_at_ms})));
           break;
+        }else if(st==='failed'){
+          log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--red)">error</span> DAG <b>${esc(foundDag)}</b> 失败`);
+          toast(`DAG ${foundDag} 失败`,'error');
+          break;
+        }else if(st==='running'||st==='pending'){
+          log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">schedule</span> DAG <b>${esc(foundDag)}</b> 执行中 (${st})...`);
         }
       }
-      if(foundDag)break;
+    }
+    if(!foundDag){
+      log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--muted)">info</span> 指令已投递（未检测到新 DAG，可能 orchestrator 处理较慢）`);
+    }
     }
 
     if(foundDag){
@@ -245,7 +252,11 @@ async function runDemo(){
     await demoFault();
     await new Promise(r=>setTimeout(r,500));
 
-    // 3. 发送指令并等待 DAG
+    // 3. 记录当前 DAG ID 集合（用于检测新 DAG）
+    await loadDags();
+    const beforeDagIds=new Set(Object.keys(dagData));
+
+    // 4. 发送指令
     log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">schedule</span> 正在提交修复流程...');
     const txt='华东地区网络延迟异常，请全流程诊断修复';
     const msgId='demo-'+Date.now();
@@ -257,18 +268,18 @@ async function runDemo(){
     if(!r.ok)throw Error('HTTP '+r.status);
     toast('指令已提交，等待 orchestrator 处理...','success');
 
-    // 4. 轮询等待 DAG 完成（最多 90s）
+    // 5. 轮询等待新 DAG 完成（最多 90s）
     let foundDag=null;
     for(let i=0;i<90;i++){
       await new Promise(r=>setTimeout(r,1000));
       await loadDags();
-      // 找最新的 full_remediation DAG
+      // 只看新出现的 DAG（不在 beforeDagIds 中的）
       const allDags=Object.values(dagData).sort((a,b)=>(b.submitted_at_ms||0)-(a.submitted_at_ms||0));
-      const demoDag=allDags.find(d=>d.dag_id&&d.dag_id.includes('full_remediation'));
-      if(demoDag){
-        if(!foundDag) foundDag=demoDag.dag_id;
-        const st=demoDag.status;
-        const nodes=demoDag.nodes||[];
+      const newDag=allDags.find(d=>d.dag_id&&!beforeDagIds.has(d.dag_id));
+      if(newDag){
+        if(!foundDag) foundDag=newDag.dag_id;
+        const st=newDag.status;
+        const nodes=newDag.nodes||[];
         const done=nodes.filter(n=>n.status==='completed').length;
         log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">progress_activity</span> DAG ${st} (${done}/${nodes.length}) ${i+1}s`);
         if(st==='completed'||st==='failed'){
@@ -286,7 +297,7 @@ async function runDemo(){
       }
     }
     if(!foundDag){
-      log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--muted)">info</span> 指令已投递（未检测到 DAG）');
+      log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--muted)">info</span> 指令已投递（未检测到新 DAG，可能 orchestrator 处理较慢）');
     }
   }catch(e){
     toast('演示执行失败: '+e.message,'error');
