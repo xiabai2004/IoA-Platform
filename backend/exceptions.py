@@ -34,10 +34,6 @@ class IoAError(Exception):
         self.extra = extra
         super().__init__(message)
 
-    def _with_code(self, code: str) -> None:
-        """子类在 super().__init__() 之后调用，覆盖 code 属性。"""
-        self.code = code
-
 
 # ── Agent ──────────────────────────────────────────────────
 
@@ -47,7 +43,6 @@ class AgentError(IoAError):
     def __init__(self, message: str, agent_id: str = "", **kw) -> None:
         self.agent_id = agent_id
         super().__init__(message, code="AGENT_ERROR", recoverable=True, **kw)
-        self._with_code("AGENT_ERROR")
 
 
 class AgentNotFoundError(IoAError):
@@ -56,7 +51,6 @@ class AgentNotFoundError(IoAError):
     def __init__(self, message: str, agent_id: str = "", **kw) -> None:
         self.agent_id = agent_id
         super().__init__(message, code="AGENT_NOT_FOUND", **kw)
-        self._with_code("AGENT_NOT_FOUND")
 
 
 class MCPConnectionError(IoAError):
@@ -64,7 +58,6 @@ class MCPConnectionError(IoAError):
 
     def __init__(self, message: str, **kw) -> None:
         super().__init__(message, code="MCP_CONNECTION_ERROR", recoverable=True, **kw)
-        self._with_code("MCP_CONNECTION_ERROR")
 
 
 # ── DAG / Orchestrator ─────────────────────────────────────
@@ -72,17 +65,15 @@ class MCPConnectionError(IoAError):
 class DagError(IoAError):
     """DAG orchestration base error."""
 
-    def __init__(self, message: str, **kw) -> None:
-        super().__init__(message, **kw)
-        self._with_code("DAG_ERROR")
+    def __init__(self, message: str, code: str = "DAG_ERROR", **kw) -> None:
+        super().__init__(message, code=code, **kw)
 
 
 class DagValidationError(DagError):
     """DAG definition validation failure (cycle, duplicate node, unknown dep)."""
 
     def __init__(self, message: str, **kw) -> None:
-        super().__init__(message, **kw)
-        self._with_code("DAG_VALIDATION_ERROR")
+        super().__init__(message, code="DAG_VALIDATION_ERROR", **kw)
 
 
 class SchedulerNotInitializedError(IoAError):
@@ -90,7 +81,6 @@ class SchedulerNotInitializedError(IoAError):
 
     def __init__(self, message: str = "DagScheduler not initialized", **kw) -> None:
         super().__init__(message, code="SCHEDULER_NOT_INITIALIZED", **kw)
-        self._with_code("SCHEDULER_NOT_INITIALIZED")
 
 
 # ── Message Bus ─────────────────────────────────────────────
@@ -98,9 +88,8 @@ class SchedulerNotInitializedError(IoAError):
 class MessageBusError(IoAError):
     """Message bus communication error."""
 
-    def __init__(self, message: str, **kw) -> None:
-        super().__init__(message, code="MESSAGE_BUS_ERROR", recoverable=True, **kw)
-        self._with_code("MESSAGE_BUS_ERROR")
+    def __init__(self, message: str, code: str = "MESSAGE_BUS_ERROR", **kw) -> None:
+        super().__init__(message, code=code, recoverable=True, **kw)
 
 
 class NoHandlerError(MessageBusError):
@@ -108,8 +97,7 @@ class NoHandlerError(MessageBusError):
 
     def __init__(self, message: str, topic: str = "", **kw) -> None:
         self.topic = topic
-        super().__init__(message, **kw)
-        self._with_code("NO_HANDLER")
+        super().__init__(message, code="NO_HANDLER", **kw)
 
 
 class MessageTimeoutError(IoAError):
@@ -117,7 +105,6 @@ class MessageTimeoutError(IoAError):
 
     def __init__(self, message: str, **kw) -> None:
         super().__init__(message, code="MESSAGE_TIMEOUT", recoverable=True, **kw)
-        self._with_code("MESSAGE_TIMEOUT")
 
 
 # ── Communication / Network ────────────────────────────────
@@ -127,7 +114,6 @@ class CommunicationError(IoAError):
 
     def __init__(self, message: str, **kw) -> None:
         super().__init__(message, code="COMMUNICATION_ERROR", recoverable=True, **kw)
-        self._with_code("COMMUNICATION_ERROR")
 
 
 # ── Diagnosis / Repair / Verify ─────────────────────────────
@@ -137,7 +123,6 @@ class DiagnosisError(IoAError):
 
     def __init__(self, message: str, **kw) -> None:
         super().__init__(message, code="DIAGNOSIS_ERROR", recoverable=True, **kw)
-        self._with_code("DIAGNOSIS_ERROR")
 
 
 class RepairError(IoAError):
@@ -146,7 +131,6 @@ class RepairError(IoAError):
     def __init__(self, message: str, action: str = "", **kw) -> None:
         self.action = action
         super().__init__(message, code="REPAIR_ERROR", recoverable=True, **kw)
-        self._with_code("REPAIR_ERROR")
 
 
 class VerificationError(IoAError):
@@ -154,7 +138,6 @@ class VerificationError(IoAError):
 
     def __init__(self, message: str, **kw) -> None:
         super().__init__(message, code="VERIFICATION_ERROR", recoverable=True, **kw)
-        self._with_code("VERIFICATION_ERROR")
 
 
 # ── Auth / Config ──────────────────────────────────────────
@@ -164,7 +147,6 @@ class AuthError(IoAError):
 
     def __init__(self, message: str, **kw) -> None:
         super().__init__(message, code="AUTH_ERROR", **kw)
-        self._with_code("AUTH_ERROR")
 
 
 class ConfigError(IoAError):
@@ -172,7 +154,6 @@ class ConfigError(IoAError):
 
     def __init__(self, message: str, **kw) -> None:
         super().__init__(message, code="CONFIG_ERROR", **kw)
-        self._with_code("CONFIG_ERROR")
 
 
 # ── Database ───────────────────────────────────────────────
@@ -180,17 +161,15 @@ class ConfigError(IoAError):
 class DatabaseError(IoAError):
     """Database operation error."""
 
-    def __init__(self, message: str, **kw) -> None:
-        super().__init__(message, code="DATABASE_ERROR", recoverable=True, **kw)
-        self._with_code("DATABASE_ERROR")
+    def __init__(self, message: str, code: str = "DATABASE_ERROR", **kw) -> None:
+        super().__init__(message, code=code, recoverable=True, **kw)
 
 
 class DatabaseNotInitializedError(DatabaseError):
     """Database connection not established."""
 
     def __init__(self, message: str = "Database not initialized", **kw) -> None:
-        super().__init__(message, **kw)
-        self._with_code("DATABASE_NOT_INITIALIZED")
+        super().__init__(message, code="DATABASE_NOT_INITIALIZED", **kw)
 
 
 # ── Simulator ──────────────────────────────────────────────
@@ -200,7 +179,6 @@ class SimulatorNotInitializedError(IoAError):
 
     def __init__(self, message: str = "SimulatorState not initialized", **kw) -> None:
         super().__init__(message, code="SIMULATOR_NOT_INITIALIZED", **kw)
-        self._with_code("SIMULATOR_NOT_INITIALIZED")
 
 
 # ── Helpers ─────────────────────────────────────────────────

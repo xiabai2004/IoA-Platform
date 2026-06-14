@@ -10,6 +10,7 @@
 """
 
 import json
+import logging
 import re
 import time
 import httpx
@@ -19,8 +20,10 @@ from agents.llm_client import get_llm_client
 from ioa_middleware.bus import MessageBus
 from ioa_middleware.orchestrator.templates import match_template, TEMPLATES
 from agents.orchestrator_agent.workflow import run_orchestrator_workflow
+from prompts import PROMPTS
 
 DOMAINS = ["east-china", "north-china", "south-china", "west-china"]
+logger = logging.getLogger("orchestrator_agent")
 DOMAIN_ALIASES = {
     "华东": "east-china", "东部": "east-china", "east": "east-china",
     "华北": "north-china", "北部": "north-china", "north": "north-china",
@@ -107,17 +110,45 @@ class OrchestratorAgent(BaseAgent):
         )
 
         if not user_input:
-            print(f"[{self.agent_id}] No user input in message, skipping")
+            logger.info("[%s] No user input in message, skipping", self.agent_id)
             return {"success": False, "error": "no_user_input"}
 
-        print(f"[{self.agent_id}] Processing: {user_input[:80]}...")
+        logger.info("[%s] Processing: %s...", self.agent_id, user_input[:80])
+
+        # ── 显式模板指定（第二场景直接指定 template）──
+        explicit_template = params.get("template", "")
+        if explicit_template and explicit_template in TEMPLATES:
+            logger.info("[%s] Explicit template: %s", self.agent_id, explicit_template)
+            dag_params = params
+            template_meta = TEMPLATES[explicit_template]
+            dag_def = template_meta["fn"](dag_params)
+            try:
+                resp = await self._dag_http.post(
+                    self._dag_url,
+                    json=dag_def,
+                    headers=self._auth,
+                )
+                resp.raise_for_status()
+                dag_id = dag_def.get("dag_id", "unknown")
+                logger.info("[%s] DAG %s submitted (%s)", self.agent_id, dag_id, explicit_template)
+                return {
+                    "success": True,
+                    "output": {
+                        "dag_id": dag_id,
+                        "template": explicit_template,
+                        "user_input": user_input,
+                        "message": f"DAG {dag_id} 已提交 (模板: {explicit_template})",
+                    },
+                }
+            except Exception as e:
+                logger.exception("[%s] Failed to submit DAG: %s", self.agent_id, e)
+                return {"success": False, "error": str(e)}
 
         # ── 场景缓存：相同指令秒级响应 ──
         cached = self._lookup_cache(user_input)
         if cached:
             cached_at_ago = int(time.time() - cached["cached_at"])
-            print(f"[{self.agent_id}] Cache hit for: {user_input[:40]}... "
-                  f"(cached {cached_at_ago}s ago, dag={cached['dag_id']})")
+            logger.info("[%s] Cache hit for: %s... (score=%.2f, cached %ds ago, dag=%s)", self.agent_id, user_input[:40], cached[1], cached_at_ago, cached['dag_id'])
             return {
                 "success": True,
                 "output": {
@@ -150,20 +181,20 @@ class OrchestratorAgent(BaseAgent):
             confidence = workflow_result.get("confidence", 0.0)
             workflow_log = workflow_result.get("workflow_log", [])
             
-            print(f"[{self.agent_id}] LangGraph workflow: template={template_name}, confidence={confidence:.2f}")
+            logger.info("[%s] LangGraph workflow: template=%s, confidence=%.2f", self.agent_id, template_name, confidence)
             for log in workflow_log:
-                print(f"  {log}")
+                logger.info("  %s", log)
                 
         except Exception as e:
             # 降级为传统方法
-            print(f"[{self.agent_id}] LangGraph workflow failed, falling back: {e}")
+            logger.info("[%s] LangGraph workflow failed, falling back: %s", self.agent_id, e)
             
             # 1. 解析意图 → 获取参数
             dag_params = await self._parse_intent(user_input)
 
             # 2. 选择模板
             template_name, template_meta, score = match_template(user_input)
-            print(f"[{self.agent_id}] Template: {template_name} (score={score:.2f})")
+            logger.info("[%s] Template: %s (score=%.2f)", self.agent_id, template_name, score)
 
             # 3. 生成 DAG 定义
             dag_def = template_meta["fn"](dag_params)
@@ -197,7 +228,7 @@ class OrchestratorAgent(BaseAgent):
             }
             # 缓存场景结果（下次相同指令秒级响应）
             self._store_cache(user_input, dag_id, template_name, diagnosis_summary, 0)
-            print(f"[{self.agent_id}] DAG {dag_id} submitted ({template_name})")
+            logger.info("[%s] DAG %s submitted (%s)", self.agent_id, dag_id, template_name)
         except Exception as e:
             result = {
                 "success": False,
@@ -253,22 +284,8 @@ class OrchestratorAgent(BaseAgent):
             for name, meta in TEMPLATES.items()
         )
 
-        prompt = f"""你是网络运维编排专家。从用户输入中提取以下信息，返回 JSON。
-
-## 可用模板
-{template_list}
-
-## 可用域
-{json.dumps(DOMAINS)}
-
-## 用户输入
-{user_input}
-
-## 要求
-返回严格 JSON，不要包含其他内容：
-{{"domain": "<匹配的域>", "fault_type": "<故障类型或unknown>", "urgency": "<low|medium|high>"}}
-
-已初步提取 domain={domain}，请确认或修正。"""
+        prompt = PROMPTS.orchestrator_intent_rule(
+            template_list, DOMAINS, user_input, domain)
         resp = await self._llm.ask(prompt)
         if not resp:
             return None

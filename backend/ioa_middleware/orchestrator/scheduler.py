@@ -37,8 +37,6 @@ from constants import TIMING, DIAG, CACHE
 
 logger = logging.getLogger("orchestrator.scheduler")
 
-# 调度器轮询间隔
-SCHEDULE_INTERVAL_SEC = 0.3
 # 调度器 agent_id
 ORCHESTRATOR_AGENT_ID = "orchestrator"
 
@@ -98,6 +96,32 @@ class DagScheduler:
             except (ConnectionError, RuntimeError) as exc:
                 logger.debug("Dashboard broadcast failed: %s", exc)
                 self._broadcast_fn = None  # reset to retry on next call
+
+    async def _persist_dispatch_message(self, msg: dict) -> None:
+        """持久化任务分发消息到 messages 表（绕过 HTTP 自调）。"""
+        from ioa_middleware.db import execute
+        import json as _json
+        intent = msg.get("intent", {})
+        payload = msg.get("payload", {})
+        await execute(
+            """INSERT OR REPLACE INTO messages
+               (msg_id, from_agent, to_agent, intent_type, intent_desc, priority,
+                payload, correlation_id, route_decision, status, ts_ms)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                msg.get("msg_id", ""),
+                msg.get("from_agent", ""),
+                msg.get("to_agent"),
+                intent.get("type", ""),
+                intent.get("description"),
+                intent.get("priority", "normal"),
+                _json.dumps(payload),
+                msg.get("correlation_id"),
+                _json.dumps(msg.get("route_decision")) if msg.get("route_decision") else None,
+                "delivered",
+                msg.get("ts_ms", int(time.time() * 1000)),
+            ),
+        )
 
     # ── 公开 API ──────────────────────────────────────────
 
@@ -229,10 +253,14 @@ class DagScheduler:
 
     async def _ws_listen(self) -> None:
         """WebSocket 监听循环：连接消息总线，接收发给 orchestrator 的结果。"""
+        reconnect_attempt = 0
+        BASE_DELAY = 1.0
+        MAX_DELAY = 60.0
         while self._running:
             try:
                 async with websockets.connect(self._ws_url, additional_headers=self._ws_auth_headers) as ws:
                     self._ws = ws
+                    reconnect_attempt = 0  # 成功连接后重置
                     logger.info("Scheduler connected to message bus")
                     while self._running:
                         try:
@@ -249,8 +277,10 @@ class DagScheduler:
                         except websockets.ConnectionClosed:
                             break
             except Exception:
-                logger.exception("Scheduler WS connection error, retrying in 3s")
-            await asyncio.sleep(3)
+                delay = min(BASE_DELAY * (2 ** reconnect_attempt), MAX_DELAY)
+                reconnect_attempt += 1
+                logger.exception("Scheduler WS connection error, retry #%d in %.1fs", reconnect_attempt, delay)
+            await asyncio.sleep(delay)
 
     # ── 调度循环 ──────────────────────────────────────────
 
@@ -285,7 +315,7 @@ class DagScheduler:
                     node_statuses = {nid: n.status.value for nid, n in state.nodes.items()}
                     logger.debug("DAG %s state: status=%s nodes=%s", dag_id, state.status.value, node_statuses)
 
-            await asyncio.sleep(SCHEDULE_INTERVAL_SEC)
+            await asyncio.sleep(TIMING.SCHEDULE_INTERVAL)
 
     # ── 拓扑排序 ──────────────────────────────────────────
 
@@ -451,8 +481,10 @@ class DagScheduler:
         }
 
         try:
-            # Retry dispatch up to max_retries times for intermittent connection issues
-            # (single-process self-call can occasionally fail under load)
+            # 通过 MessageBus 直接发布任务给 Agent（架构规范：所有通信通过 Bus）
+            if self._bus is None:
+                raise RuntimeError("MessageBus not initialized — cannot dispatch task")
+            # 重试逻辑保留用于处理瞬时的 Bus 连接波动
             dispatch_ok = False
             last_error = ""
             for dispatch_attempt in range(node.max_retries + 2):  # +2 because 0-based + 1 extra
@@ -460,12 +492,12 @@ class DagScheduler:
                     # 每次重试生成新 msg_id，避免 UNIQUE constraint 冲突
                     task_msg["msg_id"] = str(uuid.uuid4())
                     task_msg["ts_ms"] = int(time.time() * 1000)
-                    resp = await self._http.post(
-                        f"{self._middleware_base}/messages",
-                        json=task_msg,
-                        headers=self._auth_header,
-                    )
-                    resp.raise_for_status()
+
+                    # 先持久化消息到 messages 表
+                    await self._persist_dispatch_message(task_msg)
+
+                    # 通过 MessageBus 发布到 Agent 专属 topic
+                    await self._bus.publish(f"agent.{agent['agent_id']}", task_msg)
                     dispatch_ok = True
                     break
                 except Exception as exc:
@@ -500,7 +532,7 @@ class DagScheduler:
                 from ioa_middleware.registry import store as registry_store
                 await registry_store.heartbeat(agent_id, load=min(1.0, entry["count"] / 5.0))
             except Exception:
-                pass
+                logger.warning("Failed to update heartbeat for agent %s", agent_id, exc_info=True)
         except Exception:
             logger.exception("Failed to dispatch node %s", node.node_id)
             node.status = NodeStatus.failed
@@ -576,7 +608,7 @@ class DagScheduler:
                 from ioa_middleware.registry import store as registry_store
                 await registry_store.heartbeat(agent_id, load=display_load)
             except Exception:
-                pass
+                logger.warning("Failed to update heartbeat for agent %s", agent_id, exc_info=True)
 
         success = result.get("success", result.get("status") == "ok")
         output = result.get("output", result)

@@ -25,7 +25,7 @@ import json
 import time
 import logging
 from agents.base_agent import BaseAgent
-from agents.tool_client import HttpToolClient, TOOL_GET_ALL_METRICS
+from agents.tool_client import HttpToolClient, AutoToolClient, TOOL_GET_ALL_METRICS
 from ioa_middleware.bus import MessageBus
 
 logger = logging.getLogger("verifier_agent")
@@ -60,7 +60,7 @@ class VerifyAgent(BaseAgent):
             bus=bus,
             config=config,
         )
-        self.tool_client = HttpToolClient()
+        self.tool_client = AutoToolClient()  # 优先 MCP，降级 HTTP
 
     # ── 消息处理 ──────────────────────────────────────
 
@@ -107,8 +107,7 @@ class VerifyAgent(BaseAgent):
                 },
             }
 
-        print(f"[{self.agent_id}] Verifying repair (dag={dag_id}, node={node_id}, "
-              f"retry={retry_count}, domain={target_domain})")
+        logger.info("[%s] Verifying repair (dag=%s, node=%s, retry=%d/%d, domain=%s)", self.agent_id, dag_id, node_id, retry_count, MAX_VERIFY_RETRIES, target_domain)
 
         try:
             # 0. 先检查 simulator 中是否仍有活跃故障（最权威的判定依据）

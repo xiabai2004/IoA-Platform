@@ -13,6 +13,7 @@ from agents.base_agent import BaseAgent
 from agents.tool_client import HttpToolClient, TOOL_GET_ALL_METRICS
 from agents.llm_client import get_llm_client
 from ioa_middleware.bus import MessageBus
+from prompts import PROMPTS
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ class ReporterAgent(BaseAgent):
         correlation_id = message.get("correlation_id", "")
         params = payload.get("params", {})
 
-        print(f"[{self.agent_id}] Generating report (dag={dag_id}, node={node_id})")
+        logger.info("[%s] Generating report (dag=%s, node=%s)", self.agent_id, dag_id, node_id)
 
         try:
             # 1. 收集最终指标
@@ -216,21 +217,12 @@ class ReporterAgent(BaseAgent):
 
     async def _llm_enhance(self, report: dict) -> str:
         """使用 LLM 生成叙述性总结。"""
-        prompt = f"""你是网络运维报告专家。请根据以下数据生成一份简短的运维总结报告。
-
-## 故障类型
-{report['summary']['fault_type']}
-
-## 诊断描述
-{report['summary']['diagnosis_description']}
-
-## 修复结果
-{'成功' if report['summary']['repair_success'] else '失败'}
-
-## 指标改善
-{json.dumps(report.get('improvements', {}), ensure_ascii=False, indent=2)[:600]}
-
-请用 3-5 句话总结本次故障处理过程、结果和建议。"""
+        prompt = PROMPTS.reporter_summary(
+            report['summary']['fault_type'],
+            report['summary']['diagnosis_description'],
+            report['summary']['repair_success'],
+            report.get('improvements', {}),
+        )
         return await self._llm.ask(prompt)
 
 

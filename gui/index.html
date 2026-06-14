@@ -2,11 +2,11 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0" />
+<link rel="stylesheet" href="/gui/lib/material-icons.css">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>IoA 分布式网络运维协同平台</title>
-<script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js" onerror="document.getElementById('cdnError').style.display='block'"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" onerror="document.getElementById('cdnError').style.display='block'"></script>
+<script src="/gui/lib/vis-network.min.js"></script>
+<script src="/gui/lib/chart.umd.min.js"></script>
 <link rel="stylesheet" href="/gui/static/styles.css">
 </head>
 <body>
@@ -15,11 +15,6 @@
 <div id="loadingOverlay">
   <div class="spinner"></div>
   <div class="load-text">正在加载 IoA 平台...</div>
-</div>
-
-<!-- CDN Error Banner -->
-<div id="cdnError" style="display:none;background:#7f1d1d;color:#fca5a5;padding:8px 16px;text-align:center;font-size:0.8em">
-  ⚠️ 拓扑图/图表库加载失败，请检查网络连接或刷新页面重试
 </div>
 
 <!-- Header -->
@@ -70,6 +65,13 @@
     <button class="btn btn-danger" onclick="runMultiFaultDemo()" title="多域同时故障演示">
       <span class="material-symbols-outlined">warning</span> 复合故障
     </button>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+    <span style="color:var(--muted);font-size:0.75em">场景:</span>
+    <select id="scenarioSelect" onchange="switchScenario()" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:0.8em">
+      <option value="network">🌐 网络运维</option>
+      <option value="document">📄 文档审核</option>
+    </select>
   </div>
   <div id="cmdStatus" class="cmd-status"></div>
 </div>
@@ -190,6 +192,8 @@
 
 <div id="toast"></div>
 
+<script src="/gui/static/js/utils.js"></script>
+<script src="/gui/static/js/topology.js"></script>
 <script src="/gui/static/app.js"></script>
 </body>
 </html>

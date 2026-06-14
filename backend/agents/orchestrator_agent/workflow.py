@@ -13,6 +13,7 @@ LangGraph 为可选依赖，未安装时自动降级为顺序执行模式。
 import json
 import logging
 from typing import TypedDict, Annotated, Sequence
+from prompts import PROMPTS
 from operator import add as add_messages
 
 logger = logging.getLogger("workflow")
@@ -69,16 +70,7 @@ async def parse_intent_node(state: OrchestratorState, llm_client=None) -> dict:
     
     # 如果有 LLM，使用 LLM 增强解析
     if llm_client and llm_client.available:
-        prompt = f"""你是网络运维专家。从用户输入中提取以下信息，返回 JSON。
-
-## 用户输入
-{user_input}
-
-## 要求
-返回严格 JSON：
-{{"domain": "<域名>", "fault_type": "<故障类型>", "urgency": "<low|medium|high>", "description": "<简要描述>"}}
-
-已初步提取 domain={domain}，请确认或修正。"""
+        prompt = PROMPTS.orchestrator_intent_workflow(user_input, domain)
         
         try:
             response = await llm_client.ask(prompt)

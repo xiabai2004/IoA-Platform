@@ -14,7 +14,7 @@ from dataclasses import dataclass
 class _TimingConstants:
     AGENT_REGISTRATION_GRACE: float = 2.0    # Agent 注册等待宽限
     WEBSOCKET_RECV_TIMEOUT: float = 5.0      # WS 接收超时
-    SCHEDULE_INTERVAL: float = 1.0           # DAG 调度轮询间隔
+    SCHEDULE_INTERVAL: float = 0.3            # DAG 调度轮询间隔
     NODE_DISPATCH_TIMEOUT: float = 30.0      # 节点分发 HTTP 超时
     HEALTH_CHECK_INTERVAL: float = 15.0      # 心跳扫描间隔
     WS_RECONNECT_BACKOFF: float = 3.0        # WS 断线重连等待

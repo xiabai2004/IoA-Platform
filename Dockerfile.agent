@@ -10,28 +10,51 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 
 # Agent configuration via environment variables:
-#   AGENT_NAME, AGENT_ID, AGENT_DOMAIN, AGENT_CAPABILITY
-#   IOA_PSK, NATS_SERVERS, IOA_BUS_BACKEND
+#   AGENT_TYPE (monitor|diagnoser|repairer|verifier|reporter|reviewer|approver|orchestrator)
+#   AGENT_ID, AGENT_DOMAIN, IOA_PSK, NATS_SERVERS, IOA_BUS_BACKEND
 
-# Default: run as a standalone agent process
+# Default: targeted agent — loads only the requested agent class (not all 9)
+ENV AGENT_TYPE=monitor
+ENV AGENT_DOMAIN=east-china
+
 CMD ["python", "-c", "\
 import asyncio, os, sys; \
 sys.path.insert(0, '/app/backend'); \
-from agents import create_all_agents; \
 from ioa_middleware.bus import create_bus; \
 from ioa_middleware.config import get_config; \
 async def main(): \
     config = get_config(); \
     bus = create_bus(config); \
     await bus.connect(); \
-    agents = create_all_agents(bus, config); \
-    agent_id = os.environ.get('AGENT_ID', ''); \
-    target = [a for a in agents if a.agent_id == agent_id]; \
-    if target: \
-        print(f'Starting agent {agent_id}'); \
-        await target[0].start(); \
+    at = os.environ.get('AGENT_TYPE', 'monitor'); \
+    aid = os.environ.get('AGENT_ID', f'{at}-agent'); \
+    dom = os.environ.get('AGENT_DOMAIN', 'east-china'); \
+    if at == 'monitor': \
+        from agents.monitor_agent.agent import MonitorAgent; \
+        agent = MonitorAgent(bus=bus, agent_id=aid, domain=dom, config=config); \
+    elif at == 'diagnoser': \
+        from agents.diagnoser_agent.agent import DiagnoserAgent; \
+        agent = DiagnoserAgent(bus=bus, config=config); \
+    elif at == 'repairer': \
+        from agents.repairer_agent.agent import RepairerAgent; \
+        agent = RepairerAgent(bus=bus, config=config); \
+    elif at == 'verifier': \
+        from agents.verifier_agent.agent import VerifyAgent; \
+        agent = VerifyAgent(bus=bus, config=config); \
+    elif at == 'reporter': \
+        from agents.reporter_agent.agent import ReporterAgent; \
+        agent = ReporterAgent(bus=bus, config=config); \
+    elif at == 'reviewer': \
+        from scenarios.document_review.reviewer_agent import ReviewerAgent; \
+        agent = ReviewerAgent(bus=bus, config=config); \
+    elif at == 'approver': \
+        from scenarios.document_review.approver_agent import ApproverAgent; \
+        agent = ApproverAgent(bus=bus, config=config); \
     else: \
-        print(f'Agent {agent_id} not found, starting all'); \
-        await asyncio.gather(*[a.start() for a in agents]); \
+        from agents.orchestrator_agent.agent import OrchestratorAgent; \
+        agent = OrchestratorAgent(bus=bus, config=config); \
+    print(f'Starting {at} agent ({aid}) in domain={dom}'); \
+    await agent.start(); \
+    await asyncio.Event().wait(); \
 asyncio.run(main()) \
 "]

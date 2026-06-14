@@ -17,6 +17,7 @@
 import re
 import json
 import logging
+from prompts import PROMPTS
 
 from ioa_middleware.router.semantic_cache import SemanticCache
 
@@ -32,26 +33,6 @@ CAPABILITY_KEYWORDS = {
     "report":   ["报告", "汇总", "总结", "汇报", "report", "summary"],
     "orchestrate": ["编排", "调度", "协调", "orchestrate", "schedule"],
 }
-
-
-# ── LLM 语义匹配 Prompt（一次评估所有候选）─────────────────
-
-_SEMANTIC_PROMPT_TEMPLATE = """你是一个智能体路由评估专家。判断以下网络运维任务与各候选Agent能力的匹配程度。
-
-任务描述: "{task_desc}"
-
-候选Agent列表：
-{candidates_text}
-
-请分析每个Agent与任务的匹配程度，按以下标准评分（0-1）：
-- 0.9-1.0: 完全匹配，该Agent的功能就是处理这类任务
-- 0.5-0.8: 部分匹配，Agent能胜任但不是最优选择
-- 0.1-0.4: 弱匹配，能力与需求有一定关联
-- 0.0:    完全不匹配
-
-只返回JSON格式：{{"scores": {{"agent_id_1": 0.0, "agent_id_2": 0.0}}}}
-不要任何额外说明。"""
-
 
 class WeightedRouter:
     """多维加权路由引擎 — 基于多维评分选择最佳 Agent。
@@ -223,10 +204,7 @@ class WeightedRouter:
             )
 
         candidates_text = "\n".join(lines)
-        prompt = _SEMANTIC_PROMPT_TEMPLATE.format(
-            task_desc=task_desc,
-            candidates_text=candidates_text,
-        )
+        prompt = PROMPTS.semantic_router(task_desc, candidates_text)
 
         # 调 LLM
         response = await self._llm_client.ask(prompt)

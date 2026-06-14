@@ -9,10 +9,13 @@
 """
 
 import asyncio
+import logging
 import math
 import random
 import time
 from simulator.state import get_state
+
+logger = logging.getLogger("simulator.generator")
 from simulator.topology import DOMAINS, DOMAIN_NODES, get_all_links
 
 NOISE_LEVEL = 0.05   # ±5% 噪声
@@ -148,5 +151,5 @@ async def generator_loop(interval_ms: int = 1000) -> None:
         try:
             update_all_links()
         except Exception:
-            pass  # 静默容错，不打印
+            logger.exception("指标生成循环异常")
         await asyncio.sleep(interval_ms / 1000.0)

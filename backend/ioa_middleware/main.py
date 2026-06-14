@@ -37,6 +37,15 @@ async def lifespan(app: FastAPI):
     # ── 启动 ──
     config = get_config()
 
+    # 检查 DeepSeek API Key 是否有效（非占位值）
+    _api_key = os.environ.get("DEEPSEEK_API_KEY", "") or config.get("llm", {}).get("api_key", "")
+    if not _api_key or _api_key == "sk-your-key-here":
+        logger.warning(
+            "⚠️  DEEPSEEK_API_KEY 未配置或仍为占位值！"
+            " NL 自然语言指令将降级为关键词匹配，DAG 全流程诊断/修复不可用。"
+            " 请在 .env 中填入真实的 DeepSeek API Key。"
+        )
+
     # Create message bus
     bus = create_bus(config)
     await bus.connect()
@@ -51,7 +60,7 @@ async def lifespan(app: FastAPI):
     init_scheduler(bus, config)
     scheduler = get_scheduler()
     safe_task(scheduler.start(), name="dag_scheduler")
-    print("[Scheduler] DAG scheduler started")
+    logger.info("DAG scheduler started")
 
     # Phase 4: 启动所有 Agent
     from agents import create_all_agents
@@ -91,10 +100,19 @@ async def lifespan(app: FastAPI):
 
     for a in agents:
         safe_task(a.start(), name=f"agent:{a.agent_id}")
-    # 给 Agent 一点时间注册
-    await asyncio.sleep(2.0)
+    # 等待所有 Agent 注册完成（最多等 10s，每 200ms 检查一次）
+    from ioa_middleware.registry import store as registry_store
+    for _ in range(50):
+        registered = await registry_store.list_agents(status="active")
+        if len(registered) >= len(agents):
+            logger.info("All %d agents registered", len(registered))
+            break
+        await asyncio.sleep(0.2)
+    else:
+        logger.warning("Not all agents registered within timeout: %d/%d",
+                       len(await registry_store.list_agents(status="active")), len(agents))
 
-    print("[IoA Middleware] Started on port", config["middleware"]["port"])
+    logger.info("IoA Middleware started on port %d", config["middleware"]["port"])
     yield
 
     # ── 关闭 ──
@@ -228,10 +246,13 @@ Authorization: Bearer <pre_shared_key>
     # Phase 5: 注册 A2A 路由
     # A2A 路由需要桥接到 IoAP 消息系统
     async def ioap_send_func(msg: dict) -> dict:
-        """IoAP 消息发送函数（用于 A2A 桥接）"""
+        """IoAP 消息发送函数（A2A 桥接 — 直接通过 MessageBus，无 HTTP 环回）"""
+        to_agent = msg.get("to_agent", "")
+        if bus is not None and to_agent:
+            await bus.publish(f"agent.{to_agent}", msg)
+            return {"status": "ok", "routed": True}
+        # 降级：直接走 /messages 持久化 + 分发
         import httpx
-        port = config.get("middleware", {}).get("port", 8000)
-        psk = config.get("auth", {}).get("pre_shared_key", "")
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"http://127.0.0.1:{port}/messages",
@@ -310,6 +331,14 @@ Authorization: Bearer <pre_shared_key>
 
     @app.websocket("/ws/dashboard")
     async def ws_dashboard(ws: WebSocket):
+        # Token 校验（与 auth 中间件保持一致）
+        auth_enabled = os.environ.get("IOA_AUTH_ENABLED", "false").lower() == "true"
+        psk = os.environ.get("IOA_PSK", "")
+        if auth_enabled:
+            token = ws.query_params.get("token", "")
+            if not token or token != psk:
+                await ws.close(code=4001, reason="Unauthorized")
+                return
         await ws.accept()
         _dash_clients.append(ws)
         try:

@@ -298,3 +298,42 @@ def match_template(user_input: str) -> tuple[str, dict, float]:
                 best_name = name
 
     return best_name, TEMPLATES[best_name], best_score
+
+
+# ═══════════════════════════════════════════════════════════
+#  第二场景模板 — 文档审核
+# ═══════════════════════════════════════════════════════════
+
+@_register(
+    "doc_review",
+    "文档审核：Reviewer 审核 → Approver 判定",
+    ["文档", "审核", "审批", "review", "approve", "检查文档", "文档检查"],
+)
+def template_doc_review(params: dict) -> dict:
+    """文档审核 DAG：Reviewer → Approver。"""
+    dag_id = params.get("dag_id", f"dag-doc-{uuid.uuid4().hex[:8]}")
+    return {
+        "dag_id": dag_id,
+        "correlation_id": params.get("correlation_id", dag_id),
+        "description": f"审核文档: {params.get('title', '未命名文档')}",
+        "nodes": [
+            {
+                "node_id": "review",
+                "type": "review",
+                "capability": "review",
+                "params": {
+                    "content": params.get("content", ""),
+                    "title": params.get("title", "未命名文档"),
+                },
+                "max_retries": 1,
+            },
+            {
+                "node_id": "approve",
+                "type": "approve",
+                "capability": "approve",
+                "depends_on": ["review"],
+                "params": {},
+                "max_retries": 1,
+            },
+        ],
+    }

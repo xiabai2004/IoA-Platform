@@ -20,6 +20,8 @@ def create_all_agents(bus: "MessageBus", config: dict) -> list["BaseAgent"]:
     from .repairer_agent.agent import RepairerAgent
     from .verifier_agent.agent import VerifyAgent
     from .reporter_agent.agent import ReporterAgent
+    from scenarios.document_review.reviewer_agent import ReviewerAgent
+    from scenarios.document_review.approver_agent import ApproverAgent
 
     return [
         # Orchestrator — 1 instance, global domain
@@ -42,4 +44,8 @@ def create_all_agents(bus: "MessageBus", config: dict) -> list["BaseAgent"]:
 
         # Reporter — 1 instance, global domain
         ReporterAgent(bus=bus, config=config),
+
+        # ── 第二场景：文档审核（复用同一套中间件，零改动）──
+        ReviewerAgent(bus=bus, config=config),
+        ApproverAgent(bus=bus, config=config),
     ]

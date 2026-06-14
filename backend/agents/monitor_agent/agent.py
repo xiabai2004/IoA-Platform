@@ -11,6 +11,9 @@
 from agents.base_agent import BaseAgent
 from agents.tool_client import HttpToolClient, AutoToolClient, TOOL_GET_METRICS
 from ioa_middleware.bus import MessageBus
+import logging
+
+logger = logging.getLogger("monitor_agent")
 
 # ── 异常阈值 ─────────────────────────────────────────────
 
@@ -52,7 +55,7 @@ class MonitorAgent(BaseAgent):
         # 使用参数中的 domain，否则用本 Agent 的 domain
         target_domain = params.get("domain") or self._domain
 
-        print(f"[{self.agent_id}] Monitoring domain={target_domain} (dag={dag_id}, node={node_id})")
+        logger.info("[%s] Monitoring domain=%s (dag=%s, node=%s)", self.agent_id, target_domain, dag_id, node_id)
 
         try:
             # 1. 采集指标
@@ -133,5 +136,5 @@ def create_monitor_agents(bus: MessageBus, config: dict) -> list[MonitorAgent]:
             config=config,
         )
         agents.append(agent)
-    print(f"[Factory] Created {len(agents)} Monitor Agents")
+    logger.info("[Factory] Created %d Monitor Agents", len(agents))
     return agents

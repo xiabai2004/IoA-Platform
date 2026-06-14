@@ -34,6 +34,7 @@ class BaseAgent(ABC):
         self.config = config or {}
         self._running = False
         self._heartbeat_task: asyncio.Task[None] | None = None
+        self._active_tasks = 0  # 当前活跃任务数，用于负载上报
 
         # Topics
         self._agent_topic = f"agent.{agent_id}"
@@ -102,6 +103,7 @@ class BaseAgent(ABC):
         """Internal callback: route incoming message to handle_message."""
         reply_topic = message.get("_reply_to")
         from_agent = message.get("from_agent", "")
+        self._active_tasks += 1
         try:
             result = await self.handle_message(topic, message)
         except Exception:
@@ -109,6 +111,8 @@ class BaseAgent(ABC):
                 "Agent %s failed to handle message on %s", self.agent_id, topic
             )
             result = {"error": "internal_error", "agent": self.agent_id}
+        finally:
+            self._active_tasks = max(0, self._active_tasks - 1)
 
         # Reply via bus: to _reply_to topic first, then to sender's agent topic
         # Echo dag_id/node_id from the request so scheduler can correlate results
@@ -142,10 +146,15 @@ class BaseAgent(ABC):
 
     async def _heartbeat_loop(self) -> None:
         interval = self.config.get("heartbeat_interval", 10)
+        max_concurrent = self.config.get("max_concurrent_tasks", 5)
         while self._running:
             try:
                 await self.bus.publish(
-                    "registry.heartbeat", {"agent_id": self.agent_id}
+                    "registry.heartbeat", {
+                        "agent_id": self.agent_id,
+                        "load": self._active_tasks / max(max_concurrent, 1),
+                        "active_tasks": self._active_tasks,
+                    }
                 )
             except Exception:
                 logger.warning(

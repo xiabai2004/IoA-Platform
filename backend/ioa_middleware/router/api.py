@@ -78,14 +78,13 @@ async def _persist_message(msg: dict) -> None:
 
 async def _push_to_agent(agent_id: str, msg: dict) -> bool:
     """推送消息到指定 Agent 的 WebSocket 连接。返回是否成功推送。"""
-    ws = _connections.get(agent_id)
-    if ws is not None:
+    ws_list = _connections.get(agent_id, [])
+    for ws in ws_list:
         try:
             await ws.send_text(json.dumps(msg))
             return True
-        except Exception:
-            # 连接已断开但尚未清理
-            _connections.pop(agent_id, None)
+        except (ConnectionError, OSError):
+            pass  # try next connection
     return False
 
 
@@ -93,14 +92,15 @@ async def _broadcast(msg: dict) -> int:
     """广播消息到所有已连接 Agent。返回推送数量。"""
     count = 0
     disconnected = []
-    for agent_id, ws in list(_connections.items()):
-        try:
-            await ws.send_text(json.dumps(msg))
-            count += 1
-        except Exception:
-            disconnected.append(agent_id)
+    for agent_id, ws_list in list(_connections.items()):
+        for ws in ws_list:
+            try:
+                await ws.send_text(json.dumps(msg))
+                count += 1
+            except (ConnectionError, OSError):
+                disconnected.append(agent_id)
 
-    for aid in disconnected:
+    for aid in set(disconnected):
         _connections.pop(aid, None)
 
     return count
@@ -472,14 +472,10 @@ async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     logger.info("Agent %s connected via WebSocket", agent_id)
 
-    # 注册连接（踢掉旧连接）
-    old_ws = _connections.pop(agent_id, None)
-    if old_ws is not None:
-        try:
-            await old_ws.close()
-        except (WebSocketDisconnect, RuntimeError, OSError) as exc:
-            logger.debug("Error closing old WebSocket for %s: %s", agent_id, exc)
-    _connections[agent_id] = ws
+    # 注册连接（追加到列表，同类型可多实例）
+    if agent_id not in _connections:
+        _connections[agent_id] = []
+    _connections[agent_id].append(ws)
 
     try:
         while True:
@@ -507,5 +503,10 @@ async def ws_endpoint(ws: WebSocket):
     except Exception:
         logger.exception("WebSocket error for agent %s", agent_id)
     finally:
-        _connections.pop(agent_id, None)
+        # 从连接列表中移除当前 WS（同类型其他实例不受影响）
+        ws_list = _connections.get(agent_id, [])
+        if ws in ws_list:
+            ws_list.remove(ws)
+        if not ws_list:
+            _connections.pop(agent_id, None)
         logger.info("Agent %s WebSocket cleaned up", agent_id)

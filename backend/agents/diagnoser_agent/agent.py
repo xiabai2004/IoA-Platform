@@ -9,9 +9,11 @@
 import json
 import logging
 from agents.base_agent import BaseAgent
-from agents.tool_client import HttpToolClient, TOOL_GET_ALL_METRICS, TOOL_GET_TOPOLOGY
+from agents.tool_client import HttpToolClient, AutoToolClient, TOOL_GET_ALL_METRICS, TOOL_GET_TOPOLOGY
 from agents.llm_client import get_llm_client
+from agents.diagnoser_agent.workflow import run_diagnoser_workflow
 from ioa_middleware.bus import MessageBus
+from prompts import PROMPTS
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +103,7 @@ class DiagnoserAgent(BaseAgent):
             bus=bus,
             config=config,
         )
-        self.tool_client = HttpToolClient()
+        self.tool_client = AutoToolClient()  # 优先 MCP，降级 HTTP
         self._llm = get_llm_client(config)
 
     # ── 消息处理 ──────────────────────────────────────
@@ -123,50 +125,32 @@ class DiagnoserAgent(BaseAgent):
         anomalies = monitor_output.get("anomalies", [])
         metrics = monitor_output.get("metrics", {})
 
-        print(f"[{self.agent_id}] Diagnosing (dag={dag_id}, node={node_id}), {len(anomalies)} anomalies")
+        logger.info("[%s] Diagnosing (dag=%s, node=%s), %d anomalies", self.agent_id, dag_id, node_id, len(anomalies))
 
-        try:
-            # 1. 获取上下文数据
-            all_metrics = {}
-            topology = {}
-            try:
-                mr = await self.tool_client.call_tool(TOOL_GET_ALL_METRICS, {})
-                all_metrics = mr.get("metrics", {})
-            except (ConnectionError, TimeoutError, OSError) as exc:
-                logger.warning("Failed to fetch all_metrics: %s", exc)
-            except Exception:
-                logger.exception("Unexpected error fetching all_metrics")
-            try:
-                tr = await self.tool_client.call_tool(TOOL_GET_TOPOLOGY, {})
-                topology = tr
-            except (ConnectionError, TimeoutError, OSError) as exc:
-                logger.warning("Failed to fetch topology: %s", exc)
-            except Exception:
-                logger.exception("Unexpected error fetching topology")
+        # ── LangGraph 工作流（优先），降级为规则引擎 ──
+        llm_enhance = self._llm_enhance if self._llm.available else None
+        wf_result = await run_diagnoser_workflow(
+            self.tool_client, self._rule_diagnose, llm_enhance,
+            anomalies, metrics,
+        )
 
-            # 2. 规则引擎诊断
-            diagnosis = self._rule_diagnose(anomalies, metrics, all_metrics)
+        diagnosis = wf_result.get("diagnosis", {})
+        llm_insight = wf_result.get("llm_insight", "")
+        wf_error = wf_result.get("error", "")
 
-            # 3. LLM 增强（可选）
-            llm_insight = ""
-            if self._llm.available and anomalies:
-                llm_insight = await self._llm_enhance(anomalies, metrics, topology, diagnosis)
+        if wf_error:
+            logger.warning("[%s] LangGraph workflow had errors, using fallback: %s", self.agent_id, wf_error)
 
-            result = {
-                "success": True,
-                "output": {
-                    "diagnosis": diagnosis,
-                    "llm_insight": llm_insight,
-                    "anomalies": anomalies,
-                    "metrics_snapshot": metrics,
-                },
-            }
-        except Exception as e:
-            result = {
-                "success": False,
-                "error": str(e),
-            }
-
+        result = {
+            "success": True,
+            "output": {
+                "diagnosis": diagnosis,
+                "llm_insight": llm_insight,
+                "anomalies": anomalies,
+                "metrics_snapshot": metrics,
+                "generated_by": "langgraph" if not wf_error else "rule_fallback",
+            },
+        }
         return result
 
     # ── 规则诊断 ──────────────────────────────────────
@@ -207,21 +191,7 @@ class DiagnoserAgent(BaseAgent):
         self, anomalies: list[dict], metrics: dict, topology: dict, rule_diag: dict
     ) -> str:
         """使用 LLM 进行更深层的根因推理。"""
-        prompt = f"""你是网络运维专家。请分析以下异常并给出根因判断。
-
-## 异常指标
-{json.dumps(anomalies, ensure_ascii=False, indent=2)}
-
-## 当前域指标
-{json.dumps(metrics, ensure_ascii=False, indent=2)}
-
-## 拓扑概要
-{json.dumps(topology, ensure_ascii=False, indent=2)[:800]}
-
-## 规则引擎初步判断
-{json.dumps(rule_diag, ensure_ascii=False, indent=2)}
-
-请用 2-3 句话给出根因分析和建议。"""
+        prompt = PROMPTS.diagnoser_root_cause(anomalies, metrics, topology, rule_diag)
         return await self._llm.ask(prompt)
 
 

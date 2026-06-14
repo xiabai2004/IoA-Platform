@@ -11,6 +11,7 @@ from typing import Any
 from agents.base_agent import BaseAgent
 from agents.tool_client import (
     HttpToolClient,
+    AutoToolClient,
     TOOL_GET_ALL_METRICS,
     TOOL_EXECUTE_REPAIR,
     TOOL_LIST_FAULTS,
@@ -32,7 +33,7 @@ class RepairerAgent(BaseAgent):
             bus=bus,
             config=config,
         )
-        self.tool_client = HttpToolClient()
+        self.tool_client = AutoToolClient()  # 优先 MCP，降级 HTTP
 
     # ── Message handling ──────────────────────────────
 
