@@ -140,6 +140,7 @@ class PromptRegistry:
 不要任何额外说明。"""
 
 
+
 # ── 全局单例 ──────────────────────────────────────────────
 
 PROMPTS = PromptRegistry()

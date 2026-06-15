@@ -113,6 +113,11 @@ async def lifespan(app: FastAPI):
                        len(await registry_store.list_agents(status="active")), len(agents))
 
     logger.info("IoA Middleware started on port %d", config["middleware"]["port"])
+
+    # 启动独立 MCP SSE 服务 (端口 9000)
+    from ioa_middleware.mcp_server import start_mcp_server
+    _sim_url = config.get("simulator_url", "http://127.0.0.1:8001") if config else "http://127.0.0.1:8001"
+    safe_task(start_mcp_server(_sim_url), name="mcp_server")
     yield
 
     # ── 关闭 ──
@@ -265,12 +270,10 @@ Authorization: Bearer <pre_shared_key>
     init_a2a_router(ioap_send_func)
     app.include_router(a2a_router, tags=["A2A"])
 
-    # MCP Server (SSE transport) — enables McpToolClient streamable HTTP connection
-    from ioa_middleware.mcp_server import create_mcp_sse_app
+    # MCP Server (SSE transport) — registered as FastAPI routes for proper HTTP method handling
+    from ioa_middleware.mcp_server import register_mcp_routes
     _sim_url = config.get("simulator_url", "http://127.0.0.1:8001") if config else "http://127.0.0.1:8001"
-    mcp_app = create_mcp_sse_app(_sim_url)
-    app.mount("/mcp", mcp_app)
-    logger.info("MCP server mounted at /mcp (SSE transport)")
+    register_mcp_routes(app, _sim_url)
 
     # Health 端点
     @app.get("/health", tags=["Health"])

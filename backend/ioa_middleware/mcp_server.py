@@ -71,6 +71,14 @@ class SimulatorClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def execute_repair(self, action_type: str, target: str, params: dict = None) -> dict:
+        resp = await self._http.post(
+            f"{self._base}/simulator/repair",
+            json={"action_type": action_type, "target": target, "params": params or {}},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     async def close(self):
         await self._http.aclose()
 
@@ -143,6 +151,29 @@ def create_mcp_server(sim_url: str = "http://127.0.0.1:8001") -> Server:
                 description="列出所有激活的故障",
                 inputSchema={"type": "object", "properties": {}},
             ),
+            Tool(
+                name="execute_repair",
+                description="执行修复操作。action_type: traffic_shape/route_switch/acl_deploy/link_failover/restart_service",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "action_type": {
+                            "type": "string",
+                            "description": "修复操作类型",
+                            "enum": ["traffic_shape", "route_switch", "acl_deploy", "link_failover", "restart_service"],
+                        },
+                        "target": {
+                            "type": "string",
+                            "description": "修复目标（链路或设备名）",
+                        },
+                        "params": {
+                            "type": "object",
+                            "description": "修复参数",
+                        },
+                    },
+                    "required": ["action_type", "target"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -156,6 +187,10 @@ def create_mcp_server(sim_url: str = "http://127.0.0.1:8001") -> Server:
             ),
             "clear_fault": lambda: sim.clear_fault(arguments["fault_id"]),
             "list_faults": sim.list_faults,
+            "execute_repair": lambda: sim.execute_repair(
+                arguments["action_type"], arguments["target"],
+                arguments.get("params", {}),
+            ),
         }
 
         fn = handler.get(name)
@@ -193,11 +228,72 @@ def create_mcp_sse_app(sim_url: str = "http://127.0.0.1:8001"):
     import asyncio as _asyncio
 
     mcp_server = create_mcp_server(sim_url)
-    sse_transport = SseServerTransport("/mcp/messages")
+    sse_transport = SseServerTransport("/messages")
 
     async def handle_sse(request: Request):
+        # Windows CRLF fix: replace \r\n with \n in SSE output
+        async def lf_send(msg):
+            if msg.get("type") == "http.response.body":
+                body = msg.get("body", b"")
+                if isinstance(body, bytes) and b"\r\n" in body:
+                    msg = {**msg, "body": body.replace(b"\r\n", b"\n"), "more_body": msg.get("more_body", False)}
+            await request._send(msg)
         async with sse_transport.connect_sse(
-            request.scope, request.receive, request._send
+            request.scope, request.receive, lf_send
+        ) as (read_stream, write_stream):
+            await mcp_server.run(
+                read_stream, write_stream,
+                mcp_server.create_initialization_options(),
+            )
+
+    async def handle_messages(request: Request):
+        try:
+            await sse_transport.handle_post_message(
+                request.scope, request.receive, request._send
+            )
+        except Exception as exc:
+            import logging
+            _log = logging.getLogger("mcp_server")
+            _log.exception("handle_post_message crashed")
+            from starlette.responses import JSONResponse
+            response = JSONResponse({"error": str(exc)}, status_code=500)
+            await response(request.scope, request.receive, request._send)
+
+    app = Starlette(routes=[
+        Route("/sse", endpoint=handle_sse),
+        Route("/messages", endpoint=handle_messages, methods=["POST"]),
+    ])
+    return app
+
+
+def register_mcp_routes(app, sim_url: str = "http://127.0.0.1:8001"):
+    """Store MCP config on app state for later startup in lifespan."""
+    app.state._mcp_sim_url = sim_url
+
+
+async def start_mcp_server(sim_url: str = "http://127.0.0.1:8001"):
+    """Start MCP SSE server on port 9000 (called from lifespan)."""
+    import uvicorn
+    from mcp.server.sse import SseServerTransport
+    from starlette.routing import Route
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    import logging
+    _log = logging.getLogger("mcp_server")
+
+    mcp_server = create_mcp_server(sim_url)
+    sse_transport = SseServerTransport("/messages")
+
+    async def handle_sse(request: Request):
+        # Windows CRLF fix: replace \r\n with \n in SSE output
+        async def lf_send(msg):
+            if msg.get("type") == "http.response.body":
+                body = msg.get("body", b"")
+                if isinstance(body, bytes) and b"\r\n" in body:
+                    msg = {**msg, "body": body.replace(b"\r\n", b"\n"), "more_body": msg.get("more_body", False)}
+            await request._send(msg)
+        async with sse_transport.connect_sse(
+            request.scope, request.receive, lf_send
         ) as (read_stream, write_stream):
             await mcp_server.run(
                 read_stream, write_stream,
@@ -209,11 +305,25 @@ def create_mcp_sse_app(sim_url: str = "http://127.0.0.1:8001"):
             request.scope, request.receive, request._send
         )
 
-    app = Starlette(routes=[
-        Route("/sse", endpoint=handle_sse),
-        Route("/messages", endpoint=handle_messages, methods=["POST"]),
+    starlette_app = Starlette(routes=[
+        Route("/sse", handle_sse, methods=["GET"]),
+        Route("/messages", handle_messages, methods=["POST"]),
     ])
-    return app
+
+    # Force Connection: close on /messages to fix HTTP/1.1 keep-alive on Windows
+    from starlette.middleware.base import BaseHTTPMiddleware
+    class CloseMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            response = await call_next(request)
+            if request.url.path == "/messages":
+                response.headers["Connection"] = "close"
+            return response
+    starlette_app.add_middleware(CloseMiddleware)
+
+    mcp_cfg = uvicorn.Config(starlette_app, host="127.0.0.1", port=9000, log_level="warning")
+    server = uvicorn.Server(mcp_cfg)
+    _log.info("MCP SSE server starting on :9000")
+    await server.serve()
 
 
 if __name__ == "__main__":

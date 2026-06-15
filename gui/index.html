@@ -2,11 +2,11 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<link rel="stylesheet" href="/gui/lib/material-icons.css">
+<link rel="stylesheet" href="/gui/static/lib/material-icons.css">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>IoA 分布式网络运维协同平台</title>
-<script src="/gui/lib/vis-network.min.js"></script>
-<script src="/gui/lib/chart.umd.min.js"></script>
+<script src="/gui/static/lib/vis-network.min.js"></script>
+<script src="/gui/static/lib/chart.umd.min.js"></script>
 <link rel="stylesheet" href="/gui/static/styles.css">
 </head>
 <body>
@@ -65,13 +65,6 @@
     <button class="btn btn-danger" onclick="runMultiFaultDemo()" title="多域同时故障演示">
       <span class="material-symbols-outlined">warning</span> 复合故障
     </button>
-  </div>
-  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-    <span style="color:var(--muted);font-size:0.75em">场景:</span>
-    <select id="scenarioSelect" onchange="switchScenario()" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:0.8em">
-      <option value="network">🌐 网络运维</option>
-      <option value="document">📄 文档审核</option>
-    </select>
   </div>
   <div id="cmdStatus" class="cmd-status"></div>
 </div>
@@ -194,6 +187,6 @@
 
 <script src="/gui/static/js/utils.js"></script>
 <script src="/gui/static/js/topology.js"></script>
-<script src="/gui/static/app.js"></script>
+<script src="/gui/static/app.js?_=2"></script>
 </body>
 </html>

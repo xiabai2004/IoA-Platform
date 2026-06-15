@@ -33,7 +33,7 @@ class RepairerAgent(BaseAgent):
             bus=bus,
             config=config,
         )
-        self.tool_client = AutoToolClient()  # 优先 MCP，降级 HTTP
+        self.tool_client = AutoToolClient()  # MCP 优先，降级 HTTP
 
     # ── Message handling ──────────────────────────────
 
@@ -164,8 +164,9 @@ class RepairerAgent(BaseAgent):
             except Exception:
                 logger.exception("Unexpected error fetching post-repair metrics")
 
-            result = {
-                "success": repair_result.get("status") == "ok",
+            success = repair_result.get("status") == "ok"
+            result: dict[str, Any] = {
+                "success": success,
                 "output": {
                     "domain": domain,
                     "fault_type": fault_type,               # diagnostic type
@@ -179,6 +180,8 @@ class RepairerAgent(BaseAgent):
                     "active_faults_at_start": len(active_faults),
                 },
             }
+            if not success:
+                result["error"] = repair_result.get("message", repair_result.get("error", "Repair action failed"))
         except Exception as e:
             logger.exception("Repair failed for dag=%s", dag_id)
             result = {"success": False, "error": str(e)}
@@ -338,9 +341,12 @@ class RepairerAgent(BaseAgent):
                 "target": target,
                 "params": params,
             })
-            # The API returns {"status": "applied", ...} or raises HTTPException
-            if isinstance(result, dict) and result.get("status") == "applied":
-                return {"success": True, "action": action_type, "response": result}
+            # Check for error responses from MCP/HTTP
+            if isinstance(result, dict):
+                if result.get("error"):
+                    return {"success": False, "action": action_type, "error": result["error"]}
+                if result.get("status") == "applied":
+                    return {"success": True, "action": action_type, "response": result}
             return {"success": True, "action": action_type, "response": result}
         except Exception as e:
             logger.exception("Repair action %s failed on %s", action_type, target)

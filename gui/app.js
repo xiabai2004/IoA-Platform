@@ -1,7 +1,7 @@
 /* app.js — IoA 主逻辑：配置、NL指令、指标、DAG、消息流、WebSocket */
 
 const API=window.location.origin||'http://127.0.0.1:8000';
-const SIM=API.replace(/:\d+$/,'') + ':8001' || 'http://127.0.0.1:8001';
+const SIM='http://127.0.0.1:8001';
 const AUTH_TOKEN = '';
 const AUTH = {};
 
@@ -10,25 +10,8 @@ const DOMAINS=['east-china','north-china','south-china','west-china'];
 const DOMAIN_CN={'east-china':'华东','north-china':'华北','south-china':'华南','west-china':'西南'};
 const COLORS={'east-china':'#3b82f6','north-china':'#22c55e','south-china':'#f59e0b','west-china':'#a855f7'};
 
-// ── 场景切换 ────────────────────────────────────────
+// ── 场景 ────────────────────────────────────────
 let currentScenario='network';
-function switchScenario(){
-  const sel=$('scenarioSelect');
-  currentScenario=sel.value;
-  const isDoc=currentScenario==='document';
-  $('nlInput').placeholder=isDoc
-    ?'输入文档内容进行审核，例如：这是一份合同草案，请您审核...'
-    :'输入自然语言运维指令，例如：华东地区网络延迟异常，请全流程诊断修复';
-  const networkCtrls=['faultType','faultDomain'];
-  networkCtrls.forEach(id=>{const el=$(id);if(el)el.style.display=isDoc?'none':'';});
-  document.querySelectorAll('.btn-danger,.btn-success,.btn-purple').forEach(b=>{
-    if(b.textContent.includes('注入故障')||b.textContent.includes('清除故障')
-       ||b.textContent.includes('演示')||b.textContent.includes('复合故障')){
-      b.style.display=isDoc?'none':'';
-    }
-  });
-  log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">swap_horiz</span> 切换到: ${isDoc?'📄 文档审核':'🌐 网络运维'}`);
-}
 
 let expandedDags={}, dagData={}, chart=null, topoNetwork=null;
 let topoNodeDS=null, topoEdgeDS=null;
@@ -64,7 +47,6 @@ const _NL_KEYWORDS = [
   {name:'full_remediation',kw:['全流程','全链路','全自动','自动处理','端到端','auto'],domain:true},
   {name:'full_remediation_all',kw:['全域','所有域','全部域','全局','all','全部'],domain:false},
   {name:'health_check',kw:['健康','巡检','检查','health','check'],domain:false},
-  {name:'doc_review',kw:['审核','审批','review','approve','文档','检查文档'],domain:false},
 ];
 
 function validateNLInput(txt){
@@ -76,7 +58,6 @@ function validateNLInput(txt){
 
 async function sendNL(){
   const txt=$('nlInput').value.trim();if(!txt)return;
-  if(currentScenario==='document'){await sendDocReview(txt);return;}
   const check = validateNLInput(txt);
   if(!check.valid){log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">info</span> ${esc(check.msg)}`);toast(check.msg,'warning');return;}
   pushOp();
@@ -123,10 +104,10 @@ async function demoFault(){
     if(type==='cpu_overload'||type==='device_failure'){targets.push('Core-Router');}
     else if(type==='ddos'||type==='misconfig'){targets.push(`Edge-R${DOMAINS.indexOf(domain)+1}`);}
     else{targets.push(`Core-Router->Edge-R${DOMAINS.indexOf(domain)+1}`);}
-    const r=await fetch(`${SIM}/simulator/faults/inject`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type,domain,targets})});
+    const r=await fetch(`${SIM}/simulator/fault/inject?fault_type=${type}&target=${encodeURIComponent(targets[0])}`,{method:'POST'});
     if(r.ok){
       const data=await r.json();
-      log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--green)">check</span> 故障已注入: ${(data.faults||[]).map(f=>f.fault_id).join(', ')}`);
+      log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--green)">check</span> 故障已注入: ${data.fault_id||(data.faults||[]).map(f=>f.fault_id).join(', ')}`);
       toast('故障注入成功','success');
       // 用注入的精确信息触发自动修复
       try{await refreshTopoFromSimulator();}catch(e){console.warn('topo refresh:',e);}
@@ -141,7 +122,7 @@ async function clearAllFaults(skipConfirm){
   pushOp();
   log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">delete_sweep</span> 清除所有故障`);
   try{
-    const r=await fetch(`${SIM}/simulator/faults/clear`,{method:'DELETE'});
+    const r=await fetch(`${SIM}/simulator/fault/clear_all`,{method:'GET'});
     if(r.ok){
       log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--green)">check</span> 所有故障已清除`);
       toast('故障已清除','success');
@@ -154,33 +135,83 @@ async function clearAllFaults(skipConfirm){
 
 async function runDemo(){
   pushOp();
-  log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">play_circle</span> 一键演示: 注入链路拥塞 → 自动修复`);
-  toast('开始一键演示...','info');
-  $('faultType').value='link_congestion';$('faultDomain').value='east-china';
-  await demoFault();
-  popOp();
+  toast('一键演示: 清除旧故障 → 注入 → 诊断修复','info');
+  log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">play_circle</span> 一键演示开始');
+  try{
+    // 1. 清除旧故障（跳过确认）
+    await clearAllFaults(true);
+    await new Promise(r=>setTimeout(r,500));
+
+    // 2. 注入故障
+    $('faultType').value='link_congestion'; $('faultDomain').value='east-china';
+    await demoFault();
+    await new Promise(r=>setTimeout(r,500));
+
+    // 3. 记录当前 DAG，发送 NL 指令
+    await loadDags();
+    const beforeIds=new Set(Object.keys(dagData));
+    const txt='华东链路拥塞，请全流程诊断修复';
+    const msgId='demo-'+Date.now();
+    await postJSON(`${API}/messages`,{
+      msg_id:msgId,from_agent:'gui',to_agent:'orchestrator-agent',
+      intent:{type:'user',description:txt,priority:'high'},
+      payload:{params:{message:txt}},correlation_id:'gui-'+msgId,ts_ms:Date.now()
+    });
+    toast('指令已发送，等待修复...','success');
+
+    // 4. 轮询等待新 DAG 完成（最多 90s）
+    let found=null;
+    for(let i=0;i<90;i++){
+      await new Promise(r=>setTimeout(r,1000));
+      try{await loadDags();}catch(e){}
+      const all=Object.values(dagData).sort((a,b)=>(b.submitted_at_ms||0)-(a.submitted_at_ms||0));
+      const nd=all.find(d=>d.dag_id&&!beforeIds.has(d.dag_id));
+      if(nd){
+        if(!found){found=nd.dag_id;expandedDags[found]=true;}
+        const st=nd.status;
+        const nodes=nd.nodes||[];
+        const done=nodes.filter(n=>n.status==='completed').length;
+        log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">progress_activity</span> DAG ${st} (${done}/${nodes.length}) ${i+1}s`);
+        if(st==='completed'||st==='failed'){
+          renderDags(Object.values(dagData).map(d=>({dag_id:d.dag_id,status:d.status,definition:d.definition,description:d.description,submitted_at_ms:d.submitted_at_ms,finished_at_ms:d.finished_at_ms})));
+          if(st==='completed'){
+            toast('一键演示完成！故障已修复','success');
+            log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--green)">check_circle</span> 演示完成: 华东链路拥塞已自动修复');
+          }else{
+            toast('DAG 执行失败，请重试','error');
+            log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--red)">error</span> DAG 失败，请手动注入后重试');
+          }
+          break;
+        }
+      }
+    }
+    if(!found)log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--muted)">info</span> 指令已投递，可在 DAG 面板查看进度');
+  }catch(e){
+    toast('演示失败: '+friendlyError(e),'error');
+    log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--red)">cancel</span> 演示异常: '+esc(friendlyError(e)));
+  }finally{popOp();}
 }
 
 async function runMultiFaultDemo(){
   pushOp();
-  log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">warning</span> 复合故障: 3域同时注入不同类型的故障`);
+  log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">warning</span> 复合故障: 3域同时注入');
   toast('复合故障注入中...','warning');
   try{
+    await clearAllFaults(true);
+    await new Promise(r=>setTimeout(r,300));
     const configs=[{type:'link_congestion',domain:'east-china'},{type:'device_failure',domain:'north-china'},{type:'ddos',domain:'south-china'}];
-    const targets={link_congestion:[`Core-Router->Edge-R1`],device_failure:['Core-Router'],ddos:[`Edge-R3`]};
-    const results=[];
+    const targets={link_congestion:['Core-Router->Edge-R1'],device_failure:['Core-Router'],ddos:['Core-Router']};
     for(const cfg of configs){
-      try{
-        const r=await fetch(`${SIM}/simulator/faults/inject`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:cfg.type,domain:cfg.domain,targets:targets[cfg.type]||[]})});
-        if(r.ok)results.push(await r.json());
-      }catch(e){console.warn(cfg.domain,'fault inject:',e);}
+      const t=(targets[cfg.type]||[])[0]||'';
+      try{await fetch(`${SIM}/simulator/fault/inject?fault_type=${cfg.type}&target=${encodeURIComponent(t)}`,{method:'POST'});}catch(e){}
+      await new Promise(r=>setTimeout(r,300));
     }
-    log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--green)">check</span> 复合故障注入完成（${results.length}个故障）`);
-    try{await refreshTopoFromSimulator();}catch(e){console.warn('topo refresh:',e);}
-    // 触发全域修复
-    $('nlInput').value='所有域发生故障，请全自动诊断修复';
+    log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--green)">check</span> 复合故障注入完成');
+    try{await refreshTopoFromSimulator();}catch(e){}
+    // 发送全域修复指令
+    $('nlInput').value='华东链路拥塞、华北设备故障、华南DDoS攻击，请全部诊断修复';
     await sendNL();
-  }catch(e){log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--red)">error</span> 复合故障注入失败: ${esc(friendlyError(e))}`);}
+  }catch(e){log('<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--red)">error</span> 复合故障失败: '+esc(friendlyError(e)));}
   popOp();
 }
 
@@ -413,34 +444,13 @@ function updateStage(nodeType, nodeStatus){
   const timer=sb.querySelector('span.material-symbols-outlined');if(timer) timer.nextSibling.textContent=`${elapsed}s`;
 }
 function hideStageTimeline(){const sb=$('stageBar');if(sb)sb.style.display='none';}
-
-/* ── 第二场景 ── */
-async function sendDocReview(content){
-  pushOp();
-  const title = content.length>30 ? content.substring(0,30)+'...' : content;
-  log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle">description</span> 文档审核: ${esc(title)}`);
-  try{
-    const dagId='dag-doc-'+Date.now();
-    const r=await postJSON(`${API}/messages`,{
-      msg_id:'doc-'+Date.now(),from_agent:'gui',to_agent:'orchestrator-agent',
-      intent:{type:'user',description:'审核文档: '+title,priority:'normal'},
-      payload:{params:{template:'doc_review',content:content,title:title,dag_id:dagId}},
-      correlation_id:'gui-doc-'+Date.now(),ts_ms:Date.now()
-    });
-    if(!r.ok)throw Error('HTTP '+r.status);
-    log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--yellow)">schedule</span> 审核任务已提交, DAG: ${dagId}`);
-    toast('文档审核已提交','success');
-    $('nlInput').value='';
-    await new Promise(r2=>setTimeout(r2,2000));
-    await loadDags();
-  }catch(e){log(`<span class="material-symbols-outlined" style="font-size:0.9em;vertical-align:middle;color:var(--red)">error</span> 提交失败: ${esc(e.message)}`);}
-}
-
 /* ── Clock ── */
 function updateClock(){$('clock').textContent=new Date().toLocaleTimeString();}
 
 /* ── Init ── */
 async function init(){
+  // 首屏安全兜底：最多 3 秒后强制隐藏 loading（避免 CDN 异常导致白屏）
+  setTimeout(()=>{const o=$('loadingOverlay');if(o){o.classList.add('fade-out');setTimeout(()=>o.remove(),600);}},3000);
   initTopo();initChart();
   setInterval(updateClock,1000);
   // 初始拉取
@@ -452,5 +462,7 @@ async function init(){
   connectWS();connectSimWS();
   // 定时轮询
   setInterval(async()=>{try{await loadAgents();}catch(e){};try{await loadDags();}catch(e){};try{await loadMessages();}catch(e){}},15000);
+  // 数据拉取完成后淡出 loading
+  const overlay=$('loadingOverlay');if(overlay){overlay.classList.add('fade-out');setTimeout(()=>overlay.remove(),600);}
 }
 document.addEventListener('DOMContentLoaded', init);

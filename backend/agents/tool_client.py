@@ -187,11 +187,11 @@ class AutoToolClient(ToolClient):
     这是推荐使用的 ToolClient 类型。
     """
 
-    def __init__(self, mcp_server_url: str = "http://127.0.0.1:8000/mcp"):
-        self._mcp_client = McpToolClient(mcp_server_url)
-        self._http_client = HttpToolClient("http://127.0.0.1:8001")
-        self._use_mcp = True
-        self._initialized = False
+    def __init__(self, mcp_server_url: str = "http://127.0.0.1:9000", simulator_url: str = "http://127.0.0.1:8001", use_mcp: bool = True):
+        self._mcp_client = McpToolClient(mcp_server_url) if use_mcp else None
+        self._http_client = HttpToolClient(simulator_url)
+        self._use_mcp = use_mcp
+        self._initialized = use_mcp
 
     @property
     def protocol(self) -> str:
@@ -226,7 +226,8 @@ class AutoToolClient(ToolClient):
 
     async def close(self):
         """关闭所有客户端。"""
-        await self._mcp_client.close()
+        if self._mcp_client:
+            await self._mcp_client.close()
         await self._http_client.close()
 
 
